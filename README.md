@@ -183,36 +183,7 @@ build.bat
 - 实例状态栏（在线人数）
 - 8 个功能标签页，布局清晰
 
-## 中文输入（Linux fcitx5）
 
-如果 tkinter 输入框无法使用 fcitx5 输入中文：
-
-1. **安装 fcitx5 tk 前端**
-
-   | 发行版 | 命令 |
-   |--------|------|
-   | Debian/Ubuntu | `sudo apt install fcitx5-frontend-tk` |
-   | Arch Linux | `sudo pacman -S fcitx5-tk` |
-   | Fedora | `sudo dnf install fcitx5-tk` |
-
-2. **使用启动脚本**（自动设置环境变量）
-
-   ```bash
-   ./mcsm-tools.sh
-   ```
-
-   该脚本会自动设置 `XMODIFIERS=@im=fcitx` 等环境变量。
-
-3. **手动设置环境变量**
-
-   ```bash
-   export XMODIFIERS=@im=fcitx
-   export GTK_IM_MODULE=fcitx
-   export QT_IM_MODULE=fcitx
-   python -m mcsm_tools
-   ```
-
-应用启动时也会自动检测 fcitx5 环境并给出提示。
 
 ## 目录结构
 

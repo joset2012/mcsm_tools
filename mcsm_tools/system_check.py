@@ -72,23 +72,6 @@ def ensure_font_installed() -> bool:
     return True
 
 
-def _check_fcitx5():
-    if SYSTEM != "Linux":
-        return
-    if not os.environ.get("XMODIFIERS", "").startswith("@im=fcitx"):
-        return
-    os.environ.setdefault("GTK_IM_MODULE", "fcitx")
-    os.environ.setdefault("QT_IM_MODULE", "fcitx")
-    try:
-        r = subprocess.run(["fcitx5-diagnose", "--verbose", "2"], capture_output=True, text=True, timeout=10)
-        if "fcitx5-frontend-tk" not in r.stdout and "tk" not in r.stdout:
-            print("[mcsm-tools] ⚠ 未检测到 fcitx5 tk 前端，中文输入可能无法正常工作", file=sys.stderr)
-            print("[mcsm-tools]   安装: sudo apt install fcitx5-frontend-tk    # Debian/Ubuntu", file=sys.stderr)
-            print("[mcsm-tools]   安装: sudo pacman -S fcitx5-tk              # Arch Linux", file=sys.stderr)
-    except Exception:
-        pass
-
-
 def run():
     global SEVEN_ZIP_PATH
     SEVEN_ZIP_PATH = _find_7z()
@@ -110,8 +93,6 @@ def run():
     if sys.version_info < (3, 10):
         print("[mcsm-tools] ❌ Python >= 3.10 是必需的", file=sys.stderr)
         sys.exit(1)
-
-    _check_fcitx5()
 
 
 SEVEN_ZIP_PATH = _find_7z()
