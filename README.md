@@ -1,6 +1,6 @@
 # mcsm-tools
 
-MCSManager 服务器管理工具 —— 终端控制、文件管理、日志查看
+MCSManager 服务器管理工具 —— 终端控制、文件管理、日志查看、备份、玩家管理、插件管理
 
 ## 系统要求
 
@@ -132,6 +132,14 @@ build.bat
 - `!clear` 清屏、`!help` 查看内置命令
 - 自动执行 `list` 获取在线玩家
 - 双缓冲持久化保存终端输出
+- **命令历史**：↑↓ 导航历史命令，Ctrl+R 搜索，Ctrl+D 收藏常用命令
+
+### 仪表盘
+- 实例概览：状态、在线人数、内存、TPS
+- TPS 趋势折线图
+- 在线玩家变化曲线
+- 最近事件时间线
+- 每 5 秒自动刷新
 
 ### 文件管理
 - 双栏文件管理器（本地 / 远程）
@@ -140,6 +148,7 @@ build.bat
 - 多选文件压缩（zip 服务端 / 其他格式本地）
 - 递归下载目录
 - 实时进度条
+- **一键下载世界**：检测并打包下载世界文件夹
 
 ### 日志查看
 - 实时加载远程日志文件
@@ -148,10 +157,31 @@ build.bat
 - 行号显示
 - 文件列表按类型过滤
 
+### 备份管理
+- 选择目录创建备份（world/plugins/mods/config 等）
+- 远程自动压缩并下载到本地
+- 本地备份列表管理（查看/删除）
+- 备份信息持久化存储
+
+### 玩家管理
+- 管理白名单（whitelist.json）
+- 管理 OP 列表（ops.json）
+- 管理封禁列表（banned-players.json / banned-ips.json）
+- 添加/编辑/移除玩家
+- 一键保存到服务器
+
+### 插件/Mod 管理
+- 浏览 plugins / mods 目录
+- 上传新插件（.jar / .litemod / .zip）
+- 启用/禁用插件（重命名 .disabled）
+- 删除插件
+- 自动检测目录是否存在并支持创建
+
 ### 界面
 - Nord 暗色主题
 - JetBrains Mono 等宽字体
 - 实例状态栏（在线人数）
+- 8 个功能标签页，布局清晰
 
 ## 中文输入（Linux fcitx5）
 
@@ -206,6 +236,11 @@ mcsm-tools/
 │   ├── terminal_cli.py   # CLI 终端模式
 │   ├── file_manager.py   # 文件管理器
 │   ├── log_viewer.py     # 日志查看器
+│   ├── dashboard.py      # 仪表盘
+│   ├── backup_manager.py  # 备份管理
+│   ├── player_manager.py  # 玩家管理
+│   ├── plugin_manager.py  # 插件/Mod 管理
+│   ├── command_history.py # 命令历史
 │   ├── config.py         # 配置读写
 │   ├── auth.py           # 凭证管理
 │   ├── font_helper.py    # 字体安装
