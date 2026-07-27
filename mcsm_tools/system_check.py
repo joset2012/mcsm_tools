@@ -1,0 +1,117 @@
+import os
+import platform
+import shutil
+import subprocess
+import sys
+
+
+SYSTEM = platform.system()
+
+_FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+MONO_FONT = "JetBrains Mono"
+
+SEVEN_ZIP_PATH = None
+
+
+def _find_7z() -> str | None:
+    candidates = []
+    if SYSTEM == "Windows":
+        candidates = [
+            shutil.which("7z.exe"),
+            shutil.which("7z"),
+        ]
+        prog = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+        candidates.append(os.path.join(prog, "7-Zip", "7z.exe"))
+        if prog != prog_x86:
+            candidates.append(os.path.join(prog_x86, "7-Zip", "7z.exe"))
+    else:
+        candidates = [
+            shutil.which("7z"),
+            shutil.which("7za"),
+            "/usr/bin/7z",
+            "/usr/local/bin/7z",
+        ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return os.path.abspath(c)
+    return None
+
+
+def ensure_font_installed() -> bool:
+    if not os.path.exists(_FONTS_DIR):
+        return False
+
+    if SYSTEM == "Windows":
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
+        if not local_appdata:
+            return False
+        font_dir = os.path.join(local_appdata, "Microsoft", "Windows", "Fonts")
+    else:
+        font_dir = os.path.expanduser("~/.fonts")
+
+    os.makedirs(font_dir, exist_ok=True)
+    copied = 0
+    for fn in os.listdir(_FONTS_DIR):
+        if fn.endswith(".ttf"):
+            src = os.path.join(_FONTS_DIR, fn)
+            dst = os.path.join(font_dir, fn)
+            if not os.path.exists(dst):
+                try:
+                    shutil.copy2(src, dst)
+                    copied += 1
+                except Exception:
+                    pass
+
+    if copied and SYSTEM != "Windows":
+        try:
+            subprocess.run(["fc-cache", "-f"], capture_output=True, timeout=10)
+        except Exception:
+            pass
+
+    return True
+
+
+def _check_fcitx5():
+    if SYSTEM != "Linux":
+        return
+    if not os.environ.get("XMODIFIERS", "").startswith("@im=fcitx"):
+        return
+    os.environ.setdefault("GTK_IM_MODULE", "fcitx")
+    os.environ.setdefault("QT_IM_MODULE", "fcitx")
+    try:
+        r = subprocess.run(["fcitx5-diagnose", "--verbose", "2"], capture_output=True, text=True, timeout=10)
+        if "fcitx5-frontend-tk" not in r.stdout and "tk" not in r.stdout:
+            print("[mcsm-tools] ⚠ 未检测到 fcitx5 tk 前端，中文输入可能无法正常工作", file=sys.stderr)
+            print("[mcsm-tools]   安装: sudo apt install fcitx5-frontend-tk    # Debian/Ubuntu", file=sys.stderr)
+            print("[mcsm-tools]   安装: sudo pacman -S fcitx5-tk              # Arch Linux", file=sys.stderr)
+    except Exception:
+        pass
+
+
+def run():
+    global SEVEN_ZIP_PATH
+    SEVEN_ZIP_PATH = _find_7z()
+
+    print(f"[mcsm-tools] 系统: {SYSTEM}", file=sys.stderr)
+    print(f"[mcsm-tools] Python: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", file=sys.stderr)
+
+    if SEVEN_ZIP_PATH:
+        print(f"[mcsm-tools] 7-Zip: {SEVEN_ZIP_PATH}", file=sys.stderr)
+    else:
+        print("[mcsm-tools] ⚠ 7-Zip 未安装（解压非 .zip 格式和本地压缩功能不可用）", file=sys.stderr)
+
+    try:
+        ensure_font_installed()
+        print(f"[mcsm-tools] 字体 {MONO_FONT} 已就绪", file=sys.stderr)
+    except Exception as e:
+        print(f"[mcsm-tools] ⚠ 字体安装异常: {e}", file=sys.stderr)
+
+    if sys.version_info < (3, 10):
+        print("[mcsm-tools] ❌ Python >= 3.10 是必需的", file=sys.stderr)
+        sys.exit(1)
+
+    _check_fcitx5()
+
+
+SEVEN_ZIP_PATH = _find_7z()
