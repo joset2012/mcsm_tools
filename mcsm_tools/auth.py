@@ -1,7 +1,7 @@
+import json
 import os
-import pickle
 import requests
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from .config import AppConfig
 
 
@@ -19,8 +19,11 @@ def save_credentials(token: str, cookie: str, session: requests.Session) -> None
     try:
         cookies_dict = session.cookies.get_dict()
         creds = MCSMCredentials(token, cookie, cookies_dict)
-        with open(CREDENTIALS_FILE, 'wb') as f:
-            pickle.dump(creds, f)
+        # Create with owner-only permissions to avoid leaking credentials to
+        # other local users, and truncate any existing file.
+        fd = os.open(CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(asdict(creds), f)
     except Exception as e:
         print(f"保存凭证失败: {e}")
 
@@ -29,8 +32,13 @@ def load_credentials() -> MCSMCredentials | None:
     if not os.path.exists(CREDENTIALS_FILE):
         return None
     try:
-        with open(CREDENTIALS_FILE, 'rb') as f:
-            creds = pickle.load(f)
+        with open(CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        creds = MCSMCredentials(
+            token=data.get("token", ""),
+            cookie=data.get("cookie", ""),
+            session_cookies=data.get("session_cookies", {}) or {},
+        )
         session = requests.Session()
         session.cookies.update(creds.session_cookies)
         return creds

@@ -7,6 +7,16 @@ from dataclasses import dataclass, asdict
 CONFIG_FILE = "mcsm_config.ini"
 
 
+def _open_private(path: str):
+    """Open a file for writing with owner-only (0600) permissions.
+
+    The config stores credentials (token, cookie, password, apikey) in
+    plaintext, so it must not be readable by other local users.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    return os.fdopen(fd, 'w', encoding='utf-8')
+
+
 @dataclass
 class AppConfig:
     base_url: str = "https://mcsm.rainyun.com"
@@ -37,7 +47,7 @@ def create_default_config() -> AppConfig:
     config['Instance'] = {'daemon_id': '', 'instance_uuid': '', 'instance_name': ''}
     config['Auth'] = {'token': '', 'cookie': '', 'username': '', 'password': '', 'apikey': ''}
     config['UI'] = {'auto_connect': 'yes', 'show_exit_dialog': 'yes', 'terminal_memory': 'yes'}
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+    with _open_private(CONFIG_FILE) as f:
         config.write(f)
     return AppConfig()
 
@@ -83,5 +93,5 @@ def save_config(cfg: AppConfig) -> None:
         'show_exit_dialog': 'yes' if cfg.show_exit_dialog else 'no',
         'terminal_memory': 'yes' if cfg.terminal_memory else 'no',
     }
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+    with _open_private(CONFIG_FILE) as f:
         config.write(f)
