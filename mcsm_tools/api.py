@@ -1,7 +1,10 @@
 import os
 import sys
 import traceback
+
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 HEADERS_TEMPLATE = {
@@ -11,11 +14,20 @@ HEADERS_TEMPLATE = {
     "Content-Type": "application/json; charset=utf-8",
 }
 
+DEFAULT_TIMEOUT = 15
+UPLOAD_TIMEOUT = 120
+DOWNLOAD_TIMEOUT = 60
+DOWNLOAD_CHUNK_SIZE = 64 * 1024
+LIST_PAGE_SIZE = 100
+MAX_LIST_PAGES = 200
+
 
 class _ProgressReader:
+    """File wrapper reporting upload progress; usable as a context manager."""
+
     def __init__(self, filepath: str, callback):
-        self._file = open(filepath, 'rb')
         self._total = os.path.getsize(filepath)
+        self._file = open(filepath, 'rb')
         self._pos = 0
         self._callback = callback
 
@@ -30,18 +42,50 @@ class _ProgressReader:
     def __len__(self):
         return self._total
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
     def close(self):
         self._file.close()
+
+
+def _build_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=2,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        # Idempotent methods only: retrying a POST could duplicate an upload.
+        allowed_methods=Retry.DEFAULT_ALLOWED_METHODS,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 class MCSManagerAPI:
     def __init__(self, base_url: str = "https://mcsm.rainyun.com"):
         self.base_url = base_url.rstrip('/')
-        self.session = requests.Session()
+        self.session = _build_session()
+        # Up/downloads go straight to a daemon host, so they must not carry the
+        # panel's auth headers; they authenticate with a one-shot password.
+        self.transfer_session = _build_session()
         self.token = ""
         self.cookie = ""
         self.apikey = ""
         self.last_error = ""
+        self._update_headers()
+
+    def set_base_url(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip('/')
         self._update_headers()
 
     def _update_headers(self):
@@ -94,6 +138,12 @@ class MCSManagerAPI:
     def _build_url(self, path: str) -> str:
         return f"{self.base_url}{path}"
 
+    @staticmethod
+    def _instance_params(daemon_id: str, instance_uuid: str, **extra) -> dict:
+        params = {"daemonId": daemon_id, "uuid": instance_uuid}
+        params.update(extra)
+        return params
+
     def _merge_auth_params(self, params: dict | None = None) -> dict:
         params = dict(params or {})
         if self.apikey:
@@ -114,7 +164,7 @@ class MCSManagerAPI:
                 url,
                 params=merged,
                 json=json_data,
-                timeout=15,
+                timeout=DEFAULT_TIMEOUT,
             )
             if resp.status_code >= 400:
                 try:
@@ -123,10 +173,10 @@ class MCSManagerAPI:
                     body = resp.content[:2000].hex()
                 self.last_error = f"HTTP {resp.status_code}: {body}"
                 return None
-            ct = resp.headers.get('content-type', '')
-            if 'json' in ct:
+            try:
                 return resp.json()
-            return {"status": 200, "data": resp.text}
+            except ValueError:
+                return {"status": 200, "data": resp.text}
         except requests.ConnectionError:
             self.last_error = f"连接失败: {self._build_url(path)}"
             return None
@@ -168,16 +218,18 @@ class MCSManagerAPI:
 
     def login(self, username: str, password: str) -> bool:
         self._clear_auth_headers()
+        self.last_error = ""
         payload = {"username": username, "password": password}
         try:
             resp = self.session.post(
                 self._build_url("/api/auth/login"),
                 json=payload,
-                timeout=15,
+                timeout=DEFAULT_TIMEOUT,
             )
             resp.raise_for_status()
             data = resp.json()
             if data.get("status") != 200:
+                self.last_error = f"登录被拒绝: {data.get('data') or data.get('status')}"
                 return False
 
             token = None
@@ -190,7 +242,7 @@ class MCSManagerAPI:
                 info_resp = self.session.get(
                     self._build_url("/api/auth/"),
                     params={"advanced": "true"},
-                    timeout=15,
+                    timeout=DEFAULT_TIMEOUT,
                 )
                 if info_resp.status_code == 200:
                     info_data = info_resp.json()
@@ -198,12 +250,17 @@ class MCSManagerAPI:
                         token = info_data.get("data", {}).get("token")
 
             if not token:
+                self.last_error = "登录成功但未返回 token"
                 return False
 
             cookie_str = "; ".join(f"{k}={v}" for k, v in self.session.cookies.get_dict().items())
             self.set_auth(token, cookie_str)
             return True
-        except Exception:
+        except requests.RequestException as e:
+            self.last_error = f"登录请求失败: {e}"
+            return False
+        except ValueError as e:
+            self.last_error = f"登录响应解析失败: {e}"
             return False
 
     def validate_credentials(self) -> bool:
@@ -249,10 +306,7 @@ class MCSManagerAPI:
         return None
 
     def get_instance_info(self, daemon_id: str, instance_uuid: str) -> dict | None:
-        data = self._get("/api/instance", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
+        data = self._get("/api/instance", self._instance_params(daemon_id, instance_uuid))
         if data and data.get("status") == 200:
             return data.get("data", {})
         return None
@@ -296,39 +350,26 @@ class MCSManagerAPI:
             return "停止中"
         return "未知"
 
-    def kill_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/kill", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
+    def _instance_action(self, action: str, daemon_id: str, instance_uuid: str) -> bool:
+        data = self._get(f"/api/protected_instance/{action}",
+                         self._instance_params(daemon_id, instance_uuid))
         return data is not None and data.get("status") == 200
+
+    def kill_instance(self, daemon_id: str, instance_uuid: str) -> bool:
+        return self._instance_action("kill", daemon_id, instance_uuid)
 
     def open_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/open", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        return data is not None and data.get("status") == 200
+        return self._instance_action("open", daemon_id, instance_uuid)
 
     def stop_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/stop", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        return data is not None and data.get("status") == 200
+        return self._instance_action("stop", daemon_id, instance_uuid)
 
     def restart_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/restart", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        return data is not None and data.get("status") == 200
+        return self._instance_action("restart", daemon_id, instance_uuid)
 
     def get_websocket_password(self, daemon_id: str, instance_uuid: str) -> tuple[str, str] | None:
-        data = self._post("/api/protected_instance/stream_channel", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        })
+        data = self._post("/api/protected_instance/stream_channel",
+                          self._instance_params(daemon_id, instance_uuid))
         if data and data.get("status") == 200:
             d = data.get("data", {})
             password = d.get("password")
@@ -340,160 +381,169 @@ class MCSManagerAPI:
     # ==================== Files ====================
 
     def list_files(self, daemon_id: str, instance_uuid: str, path: str = "/") -> list[dict] | None:
-        data = self._get("/api/files/list", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "target": path,
-            "page": 0,
-            "page_size": 100,
-            "file_name": "",
-        })
-        if data and data.get("status") == 200:
-            d = data.get("data")
-            if isinstance(d, list):
-                return d
-            if isinstance(d, dict):
-                items = d.get("items")
-                if items is not None:
-                    return items
-                return list(d.values())
+        """List a remote directory, following pagination until it is exhausted."""
+        items: list[dict] = []
+        for page in range(MAX_LIST_PAGES):
+            data = self._get("/api/files/list", self._instance_params(
+                daemon_id, instance_uuid,
+                target=path,
+                page=page,
+                page_size=LIST_PAGE_SIZE,
+                file_name="",
+            ))
+            if not data or data.get("status") != 200:
+                return items if items else None
+            chunk = self._extract_file_items(data.get("data"))
+            if chunk is None:
+                return items if items else None
+            items.extend(chunk)
+            if len(chunk) < LIST_PAGE_SIZE:
+                break
+        return items
+
+    @staticmethod
+    def _extract_file_items(payload) -> list[dict] | None:
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            items = payload.get("items")
+            if items is not None:
+                return items if isinstance(items, list) else []
+            return [v for v in payload.values() if isinstance(v, dict)]
         return None
 
     def upload_file(self, local_path: str, remote_dir: str,
                     daemon_id: str, instance_uuid: str,
                     progress_callback=None) -> bool:
-        if not os.path.exists(local_path):
+        if not os.path.isfile(local_path):
+            self.last_error = f"本地文件不存在: {local_path}"
             return False
 
         file_name = os.path.basename(local_path)
 
-        data = self._post("/api/files/upload", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "upload_dir": remote_dir,
-        })
+        data = self._post("/api/files/upload", self._instance_params(
+            daemon_id, instance_uuid, upload_dir=remote_dir))
         if not data or data.get("status") != 200:
+            self.last_error = self.last_error or "获取上传地址失败"
             return False
 
-        d = data.get("data", {})
-        upload_password = d.get("password")
-        upload_addr = d.get("addr")
-        if not upload_password or not upload_addr:
+        endpoint = self._transfer_endpoint(data.get("data", {}))
+        if not endpoint:
+            self.last_error = "服务器未返回上传地址"
             return False
+        addr, password = endpoint
+        upload_url = f"{addr}/upload/{password}"
 
-        upload_url = upload_addr.replace("wss://", "https://")
-        if not upload_url.startswith("http"):
-            upload_url = f"https://{upload_url}"
-        upload_url = f"{upload_url}/upload/{upload_password}"
-
+        headers = {
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/plain, */*",
+        }
         try:
-            reader = _ProgressReader(local_path, progress_callback)
-            files = {'file': (file_name, reader, 'application/octet-stream')}
-            headers = {
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json, text/plain, */*",
-            }
-            resp = requests.post(upload_url, files=files, headers=headers, timeout=120)
-            reader.close()
-            return resp.status_code == 200
-        except Exception:
+            with _ProgressReader(local_path, progress_callback) as reader:
+                files = {'file': (file_name, reader, 'application/octet-stream')}
+                resp = self.transfer_session.post(upload_url, files=files, headers=headers,
+                                                  timeout=UPLOAD_TIMEOUT)
+            if resp.status_code != 200:
+                self.last_error = f"上传失败 HTTP {resp.status_code}"
+                return False
+            return True
+        except (OSError, requests.RequestException) as e:
+            self.last_error = f"上传失败: {e}"
             return False
 
     def download_file(self, daemon_id: str, instance_uuid: str,
                       file_path: str, local_path: str,
                       progress_callback=None) -> bool:
-        data = self._post("/api/files/download", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "file_name": file_path,
-        })
+        data = self._post("/api/files/download", self._instance_params(
+            daemon_id, instance_uuid, file_name=file_path))
         if not data or data.get("status") != 200:
+            self.last_error = self.last_error or "获取下载地址失败"
             return False
 
-        d = data.get("data", {})
-        password = d.get("password")
-        addr = d.get("addr")
-        if not password or not addr:
+        endpoint = self._transfer_endpoint(data.get("data", {}))
+        if not endpoint:
+            self.last_error = "服务器未返回下载地址"
             return False
-
-        download_addr = addr.replace("wss://", "https://")
-        if not download_addr.startswith("http"):
-            download_addr = f"https://{download_addr}"
+        addr, password = endpoint
 
         file_name = os.path.basename(file_path)
-        download_url = f"{download_addr}/download/{password}/{file_name}"
+        download_url = f"{addr}/download/{password}/{file_name}"
 
+        partial_path = f"{local_path}.part"
         try:
-            resp = requests.get(download_url, timeout=60, stream=True)
-            resp.raise_for_status()
-
-            total = int(resp.headers.get('content-length', 0))
-            downloaded = 0
-
             os.makedirs(os.path.dirname(local_path) or '.', exist_ok=True)
-            with open(local_path, 'wb') as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    if chunk:
+            with self.transfer_session.get(download_url, timeout=DOWNLOAD_TIMEOUT,
+                                           stream=True) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get('content-length', 0))
+                downloaded = 0
+                with open(partial_path, 'wb') as f:
+                    for chunk in resp.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                        if not chunk:
+                            continue
                         f.write(chunk)
                         downloaded += len(chunk)
                         if progress_callback:
                             progress_callback(downloaded, total)
+            os.replace(partial_path, local_path)
             return True
-        except Exception:
+        except (OSError, requests.RequestException) as e:
+            self.last_error = f"下载失败: {e}"
+            try:
+                os.unlink(partial_path)
+            except OSError:
+                pass
             return False
 
+    @staticmethod
+    def _transfer_endpoint(payload: dict) -> tuple[str, str] | None:
+        """Normalize the (addr, password) pair used by up/download endpoints."""
+        password = payload.get("password")
+        addr = payload.get("addr")
+        if not password or not addr:
+            return None
+        addr = addr.replace("wss://", "https://").replace("ws://", "http://")
+        if not addr.startswith("http"):
+            addr = f"https://{addr}"
+        return addr.rstrip('/'), password
+
     def delete_files(self, daemon_id: str, instance_uuid: str, targets: list[str]) -> bool:
-        data = self._delete("/api/files", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"targets": targets})
+        data = self._delete("/api/files", self._instance_params(daemon_id, instance_uuid),
+                            json_data={"targets": targets})
         return data is not None and data.get("status") == 200
 
     def create_directory(self, daemon_id: str, instance_uuid: str, dir_path: str) -> bool:
-        data = self._post("/api/files/mkdir", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"target": dir_path})
+        data = self._post("/api/files/mkdir", self._instance_params(daemon_id, instance_uuid),
+                          json_data={"target": dir_path})
         return data is not None and data.get("status") == 200
 
     def move_files(self, daemon_id: str, instance_uuid: str, targets: list[list[str]]) -> bool:
-        data = self._put("/api/files/move", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"targets": targets})
+        data = self._put("/api/files/move", self._instance_params(daemon_id, instance_uuid),
+                         json_data={"targets": targets})
         return data is not None and data.get("status") == 200
 
     def get_file_info(self, daemon_id: str, instance_uuid: str, file_path: str) -> dict | None:
-        data = self._get("/api/files/info", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "target": file_path,
-        })
+        data = self._get("/api/files/info",
+                         self._instance_params(daemon_id, instance_uuid, target=file_path))
         if data and data.get("status") == 200:
             return data.get("data", {})
         return None
 
     def touch_file(self, daemon_id: str, instance_uuid: str, file_path: str) -> bool:
-        data = self._post("/api/files/touch", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"target": file_path})
+        data = self._post("/api/files/touch", self._instance_params(daemon_id, instance_uuid),
+                          json_data={"target": file_path})
         return data is not None and data.get("status") == 200
 
     def decompress_files(self, daemon_id: str, instance_uuid: str,
                          source: str, target_dir: str,
                          code: str = "utf-8") -> bool:
-        data = self._post("/api/files/compress", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"type": 2, "code": code, "source": source, "targets": target_dir})
+        data = self._post("/api/files/compress", self._instance_params(daemon_id, instance_uuid),
+                          json_data={"type": 2, "code": code, "source": source, "targets": target_dir})
         return data is not None and data.get("status") == 200
 
     def compress_files(self, daemon_id: str, instance_uuid: str,
                        source: str, targets: list[str],
                        code: str = "utf-8") -> bool:
-        data = self._post("/api/files/compress", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"type": 1, "code": code, "source": source, "targets": targets})
+        data = self._post("/api/files/compress", self._instance_params(daemon_id, instance_uuid),
+                          json_data={"type": 1, "code": code, "source": source, "targets": targets})
         return data is not None and data.get("status") == 200

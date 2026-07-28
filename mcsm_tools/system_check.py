@@ -10,7 +10,17 @@ SYSTEM = platform.system()
 _FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
 MONO_FONT = "JetBrains Mono"
 
-SEVEN_ZIP_PATH = None
+_SEVEN_ZIP_PATH: str | None = None
+_SEVEN_ZIP_RESOLVED = False
+
+
+def seven_zip_path() -> str | None:
+    """Path to the 7-Zip binary, resolved once and cached."""
+    global _SEVEN_ZIP_PATH, _SEVEN_ZIP_RESOLVED
+    if not _SEVEN_ZIP_RESOLVED:
+        _SEVEN_ZIP_PATH = _find_7z()
+        _SEVEN_ZIP_RESOLVED = True
+    return _SEVEN_ZIP_PATH
 
 
 def _find_7z() -> str | None:
@@ -60,39 +70,30 @@ def ensure_font_installed() -> bool:
                 try:
                     shutil.copy2(src, dst)
                     copied += 1
-                except Exception:
+                except OSError:
                     pass
 
-    if copied and SYSTEM != "Windows":
+    if copied and SYSTEM != "Windows" and shutil.which("fc-cache"):
         try:
-            subprocess.run(["fc-cache", "-f"], capture_output=True, timeout=10)
-        except Exception:
+            subprocess.run(["fc-cache", "-f"], capture_output=True, timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
             pass
 
     return True
 
 
 def run():
-    global SEVEN_ZIP_PATH
-    SEVEN_ZIP_PATH = _find_7z()
-
     print(f"[mcsm-tools] 系统: {SYSTEM}", file=sys.stderr)
     print(f"[mcsm-tools] Python: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", file=sys.stderr)
 
-    if SEVEN_ZIP_PATH:
-        print(f"[mcsm-tools] 7-Zip: {SEVEN_ZIP_PATH}", file=sys.stderr)
+    path = seven_zip_path()
+    if path:
+        print(f"[mcsm-tools] 7-Zip: {path}", file=sys.stderr)
     else:
         print("[mcsm-tools] ⚠ 7-Zip 未安装（解压非 .zip 格式和本地压缩功能不可用）", file=sys.stderr)
 
     try:
         ensure_font_installed()
         print(f"[mcsm-tools] 字体 {MONO_FONT} 已就绪", file=sys.stderr)
-    except Exception as e:
+    except OSError as e:
         print(f"[mcsm-tools] ⚠ 字体安装异常: {e}", file=sys.stderr)
-
-    if sys.version_info < (3, 10):
-        print("[mcsm-tools] ❌ Python >= 3.10 是必需的", file=sys.stderr)
-        sys.exit(1)
-
-
-SEVEN_ZIP_PATH = _find_7z()

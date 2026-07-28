@@ -1,11 +1,9 @@
 import gzip
 import os
-import re
 import tempfile
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime
+from tkinter import ttk
 
 from .theme import Nord
 from .font_helper import MONO_FONT
@@ -150,7 +148,6 @@ class LogViewerTab:
         self._log_text.config(state=tk.DISABLED)
 
     def _apply_syntax_highlight(self):
-        content = self._log_text.get('1.0', tk.END)
 
         for pattern, tag in [
             (r'\[INFO\]|\[\d+:\d+:\d+\]\s*\[.*?/INFO\].*', 'info'),
@@ -271,7 +268,7 @@ class LogViewerTab:
                         with gzip.open(tmp.name, 'rt', encoding='utf-8', errors='replace') as f:
                             text = f.read()
                     else:
-                        with open(tmp.name, 'r', encoding='utf-8', errors='replace') as f:
+                        with open(tmp.name, encoding='utf-8', errors='replace') as f:
                             text = f.read()
                 except Exception:
                     text = "读取文件失败"

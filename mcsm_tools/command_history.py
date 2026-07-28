@@ -1,54 +1,65 @@
 import json
 import os
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
+from .config import config_dir
 
-HISTORY_DIR = os.path.expanduser(os.path.join("~", ".mcsm_tools"))
-HISTORY_FILE = os.path.join(HISTORY_DIR, "command_history.json")
-FAVORITES_FILE = os.path.join(HISTORY_DIR, "command_favorites.json")
 MAX_HISTORY = 500
 
 
-def _ensure_dir():
-    os.makedirs(HISTORY_DIR, exist_ok=True)
+def _history_dir() -> Path:
+    return config_dir()
+
+
+def _history_file() -> Path:
+    return _history_dir() / "command_history.json"
+
+
+def _favorites_file() -> Path:
+    return _history_dir() / "command_favorites.json"
+
+
+def _read_list(path: Path) -> list[dict]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict) and "cmd" in item]
+
+
+def _write_list(path: Path, items: list[dict]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False)
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        pass
 
 
 class CommandHistory:
     def __init__(self):
-        _ensure_dir()
-        self._history: list[dict] = []
-        self._favorites: list[dict] = []
-        self._pos = -1
-        self._load()
-
-    def _load(self):
-        try:
-            if os.path.exists(HISTORY_FILE):
-                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._history = data if isinstance(data, list) else []
-        except Exception:
-            self._history = []
-        try:
-            if os.path.exists(FAVORITES_FILE):
-                with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._favorites = data if isinstance(data, list) else []
-        except Exception:
-            self._favorites = []
+        self._history: list[dict] = _read_list(_history_file())[-MAX_HISTORY:]
+        self._favorites: list[dict] = _read_list(_favorites_file())
+        self._pos = len(self._history)
 
     def _save(self):
-        _ensure_dir()
-        try:
-            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._history[-MAX_HISTORY:], f, ensure_ascii=False)
-        except Exception:
-            pass
-        try:
-            with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._favorites, f, ensure_ascii=False)
-        except Exception:
-            pass
+        del self._history[:-MAX_HISTORY]
+        _write_list(_history_file(), self._history)
+        _write_list(_favorites_file(), self._favorites)
 
     def add(self, command: str):
         cmd = command.strip()
@@ -56,11 +67,10 @@ class CommandHistory:
             return
         if self._history and self._history[-1]["cmd"] == cmd:
             self._history[-1]["time"] = datetime.now().isoformat()
-            self._save()
-            return
-        self._history.append({"cmd": cmd, "time": datetime.now().isoformat()})
-        self._pos = len(self._history)
+        else:
+            self._history.append({"cmd": cmd, "time": datetime.now().isoformat()})
         self._save()
+        self._pos = len(self._history)
 
     def prev(self) -> str | None:
         if not self._history:

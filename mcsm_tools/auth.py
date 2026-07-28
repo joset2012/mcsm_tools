@@ -1,11 +1,22 @@
+import json
 import os
-import pickle
+import stat
+import sys
+import tempfile
+from dataclasses import dataclass, asdict
+from pathlib import Path
+
 import requests
-from dataclasses import dataclass
-from .config import AppConfig
+
+from .config import config_dir
 
 
-CREDENTIALS_FILE = ".mcsm_credentials"
+CREDENTIALS_FILE_NAME = ".mcsm_credentials"
+LEGACY_CREDENTIALS_FILE = Path(CREDENTIALS_FILE_NAME)
+
+
+def credentials_path() -> Path:
+    return config_dir() / CREDENTIALS_FILE_NAME
 
 
 @dataclass
@@ -16,94 +27,131 @@ class MCSMCredentials:
 
 
 def save_credentials(token: str, cookie: str, session: requests.Session) -> None:
+    path = credentials_path()
+    creds = MCSMCredentials(token, cookie, dict(session.cookies.get_dict()))
     try:
-        cookies_dict = session.cookies.get_dict()
-        creds = MCSMCredentials(token, cookie, cookies_dict)
-        with open(CREDENTIALS_FILE, 'wb') as f:
-            pickle.dump(creds, f)
-    except Exception as e:
-        print(f"保存凭证失败: {e}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(asdict(creds), f, ensure_ascii=False)
+            os.chmod(tmp_name, stat.S_IRUSR | stat.S_IWUSR)
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+    except OSError as e:
+        print(f"保存凭证失败: {e}", file=sys.stderr)
 
 
 def load_credentials() -> MCSMCredentials | None:
-    if not os.path.exists(CREDENTIALS_FILE):
+    path = credentials_path()
+    if not path.exists():
+        # Credentials used to be pickled next to the working directory; that
+        # format is unsafe to deserialize, so it is dropped instead of read.
+        _clear_legacy()
         return None
     try:
-        with open(CREDENTIALS_FILE, 'rb') as f:
-            creds = pickle.load(f)
-        session = requests.Session()
-        session.cookies.update(creds.session_cookies)
-        return creds
-    except Exception as e:
-        print(f"加载凭证失败: {e}")
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"加载凭证失败: {e}", file=sys.stderr)
         return None
+    if not isinstance(data, dict):
+        return None
+    cookies = data.get("session_cookies")
+    return MCSMCredentials(
+        token=str(data.get("token", "")),
+        cookie=str(data.get("cookie", "")),
+        session_cookies=cookies if isinstance(cookies, dict) else {},
+    )
 
 
 def clear_credentials() -> None:
-    if os.path.exists(CREDENTIALS_FILE):
-        os.remove(CREDENTIALS_FILE)
+    path = credentials_path()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"删除凭证失败: {e}", file=sys.stderr)
+    _clear_legacy()
+
+
+def _clear_legacy() -> None:
+    try:
+        LEGACY_CREDENTIALS_FILE.unlink()
+    except (FileNotFoundError, OSError):
+        pass
 
 
 def secure_input(prompt="密码: ", mask_char='*') -> str:
-    import sys
     if sys.platform == 'win32':
-        import msvcrt
+        return _secure_input_windows(prompt, mask_char)
+    return _secure_input_posix(prompt, mask_char)
+
+
+def _secure_input_windows(prompt: str, mask_char: str) -> str:
+    import msvcrt
+
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    password: list[str] = []
+    while True:
+        ch = msvcrt.getch()
+        if ch in (b'\r', b'\n'):
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+            break
+        if ch == b'\x08':
+            if password:
+                password.pop()
+                sys.stdout.write('\b \b')
+                sys.stdout.flush()
+        elif ch == b'\x03':
+            raise KeyboardInterrupt
+        else:
+            try:
+                char = ch.decode('utf-8')
+            except UnicodeDecodeError:
+                continue
+            sys.stdout.write(mask_char)
+            sys.stdout.flush()
+            password.append(char)
+    return ''.join(password)
+
+
+def _secure_input_posix(prompt: str, mask_char: str) -> str:
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
         sys.stdout.write(prompt)
         sys.stdout.flush()
-        password = []
+        password: list[str] = []
         while True:
-            ch = msvcrt.getch()
-            if ch in (b'\r', b'\n'):
+            ch = sys.stdin.read(1)
+            if ch in ('\r', '\n'):
                 sys.stdout.write('\n')
                 sys.stdout.flush()
                 break
-            elif ch == b'\x08':
+            if ch in ('\x7f', '\b'):
                 if password:
                     password.pop()
                     sys.stdout.write('\b \b')
                     sys.stdout.flush()
-            elif ch == b'\x03':
+            elif ch == '\x03':
                 raise KeyboardInterrupt
             else:
-                try:
-                    char = ch.decode('utf-8')
-                    sys.stdout.write(char)
-                    sys.stdout.flush()
-                    sys.stdout.write('\b' + mask_char)
-                    sys.stdout.flush()
-                    password.append(char)
-                except UnicodeDecodeError:
-                    continue
+                sys.stdout.write(mask_char)
+                sys.stdout.flush()
+                password.append(ch)
         return ''.join(password)
-    else:
-        import termios
-        import tty
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
-            password = []
-            while True:
-                ch = sys.stdin.read(1)
-                if ch in ('\r', '\n'):
-                    sys.stdout.write('\n')
-                    sys.stdout.flush()
-                    break
-                elif ch in ('\x7f', '\b'):
-                    if password:
-                        password.pop()
-                        sys.stdout.write('\b \b')
-                        sys.stdout.flush()
-                elif ch == '\x03':
-                    raise KeyboardInterrupt
-                else:
-                    sys.stdout.write(ch)
-                    sys.stdout.flush()
-                    sys.stdout.write('\b' + mask_char)
-                    sys.stdout.flush()
-                    password.append(ch)
-            return ''.join(password)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)

@@ -5,8 +5,6 @@ import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
-from .font_helper import MONO_FONT
-from .theme import Nord
 
 
 SERVER_FILES = {
@@ -96,7 +94,7 @@ class PlayerManagerTab:
                 )
                 if ok:
                     try:
-                        with open(tmp.name, "r", encoding="utf-8") as f:
+                        with open(tmp.name, encoding="utf-8") as f:
                             data = json.load(f)
                         self._player_data = data if isinstance(data, list) else []
                     except (json.JSONDecodeError, Exception):
@@ -156,7 +154,6 @@ class PlayerManagerTab:
         sel = self._tree.selection()
         if not sel:
             return
-        item = self._tree.item(sel[0])
         idx = self._tree.index(sel[0])
         if idx >= len(self._player_data):
             return
@@ -190,7 +187,7 @@ class PlayerManagerTab:
                     self.app._daemon_id, self.app._instance_uuid,
                 )
                 self.app.root.after(0, lambda: self._on_save_result(ok))
-            except Exception as e:
+            except Exception:
                 self.app.root.after(0, lambda: self._on_save_result(False))
             finally:
                 try:

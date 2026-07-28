@@ -8,14 +8,14 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from .font_helper import MONO_FONT
-from .system_check import SEVEN_ZIP_PATH
+from .system_check import seven_zip_path
 from .theme import Nord
 
 
 EDITABLE_EXTS = {".txt", ".log", ".json", ".yml", ".yaml", ".xml", ".toml",
                  ".cfg", ".conf", ".ini", ".properties", ".sh", ".bat",
                   ".py", ".js", ".ts", ".java", ".html", ".css", ".md",
-                  ".env", ".gitignore", ".dockerfile", ".yml", ".yaml"}
+                  ".env", ".gitignore", ".dockerfile"}
 
 ARCHIVE_EXTS = {".zip", ".tar", ".tar.gz", ".tgz", ".gz", ".7z", ".rar", ".xz", ".bz2"}
 
@@ -333,12 +333,13 @@ class FileManagerTab:
                     )
                     self.app.root.after(0, lambda: self._on_remote_unzip_result(ok, name))
                 except Exception as e:
-                    self.app.root.after(0, lambda: self._on_extract_result(False, str(e), None))
+                    self.app.root.after(0, lambda err=str(e): self._on_extract_result(False, err, None))
 
             threading.Thread(target=do_zip, daemon=True).start()
             return
 
-        if not SEVEN_ZIP_PATH:
+        seven_zip = seven_zip_path()
+        if not seven_zip:
             self._on_extract_result(False, "7-Zip 未安装，无法解压非 .zip 格式", None)
             return
 
@@ -369,7 +370,7 @@ class FileManagerTab:
                 extract_dir = os.path.join(tmp_dir, "extracted")
                 os.makedirs(extract_dir, exist_ok=True)
 
-                cmd = [SEVEN_ZIP_PATH, "x", local_archive, f"-o{extract_dir}", "-y"]
+                cmd = [seven_zip, "x", local_archive, f"-o{extract_dir}", "-y"]
                 result = subprocess.run(cmd, capture_output=True, timeout=300)
                 if result.returncode != 0:
                     err = result.stderr.decode("utf-8", errors="replace").strip()
@@ -380,7 +381,7 @@ class FileManagerTab:
                 self._upload_extracted(extract_dir, self._current_remote_dir, tmp_dir)
 
             except Exception as e:
-                self.app.root.after(0, lambda: self._on_extract_result(False, str(e), tmp_dir))
+                self.app.root.after(0, lambda err=str(e): self._on_extract_result(False, err, tmp_dir))
 
         threading.Thread(target=do_extract, daemon=True).start()
 
@@ -388,7 +389,7 @@ class FileManagerTab:
         try:
             file_count = 0
             dir_count = 0
-            for root, dirs, files in os.walk(extract_dir):
+            for root, _dirs, files in os.walk(extract_dir):
                 rel_root = os.path.relpath(root, extract_dir)
                 if rel_root == ".":
                     rel_root = ""
@@ -427,7 +428,7 @@ class FileManagerTab:
                 True, f"解压完成：{file_count} 个文件, {dir_count} 个目录", tmp_dir
             ))
         except Exception as e:
-            self.app.root.after(0, lambda: self._on_extract_result(False, str(e), tmp_dir))
+            self.app.root.after(0, lambda err=str(e): self._on_extract_result(False, err, tmp_dir))
 
     def _on_extract_result(self, ok: bool, msg: str, tmp_dir: str | None):
         if tmp_dir is not None:
@@ -533,7 +534,7 @@ class FileManagerTab:
                 )
                 self.app.root.after(0, lambda: self._on_compress_result(ok, name, True))
             except Exception as e:
-                self.app.root.after(0, lambda: self._on_compress_result(False, str(e), True))
+                self.app.root.after(0, lambda err=str(e): self._on_compress_result(False, err, True))
 
         threading.Thread(target=do_zip, daemon=True).start()
 
@@ -545,7 +546,8 @@ class FileManagerTab:
         if not name:
             return
 
-        if fmt != ".tar.gz" and fmt != ".tar" and not SEVEN_ZIP_PATH:
+        seven_zip = seven_zip_path()
+        if fmt not in (".tar.gz", ".tar") and not seven_zip:
             messagebox.showerror("压缩失败", "7-Zip 未安装，无法压缩为 .7z 格式")
             return
 
@@ -597,7 +599,7 @@ class FileManagerTab:
                             tar.add(item_path, arcname=item_name)
                 else:
                     fmt_7z = fmt.lstrip(".")
-                    cmd = [SEVEN_ZIP_PATH, "a", f"-t{fmt_7z}", local_path, download_dir + os.sep + "*"]
+                    cmd = [seven_zip, "a", f"-t{fmt_7z}", local_path, download_dir + os.sep + "*"]
                     result = subprocess.run(cmd, capture_output=True, timeout=600)
                     if result.returncode != 0:
                         err = result.stderr.decode("utf-8", errors="replace").strip()
@@ -606,7 +608,7 @@ class FileManagerTab:
 
                 self.app.root.after(0, lambda: self._on_compress_result(True, name, False))
             except Exception as e:
-                self.app.root.after(0, lambda: self._on_compress_result(False, str(e), False))
+                self.app.root.after(0, lambda err=str(e): self._on_compress_result(False, err, False))
             finally:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -666,7 +668,7 @@ class FileManagerTab:
                 items = self.app.api.list_files(self.app._daemon_id, self.app._instance_uuid, path)
                 self.app.root.after(0, lambda: self._on_remote_listed(items))
             except Exception as e:
-                self.app.root.after(0, lambda: self._remote_tree.insert("", tk.END, text=f"错误: {e}"))
+                self.app.root.after(0, lambda err=str(e): self._remote_tree.insert("", tk.END, text=f"错误: {err}"))
         threading.Thread(target=do_list, daemon=True).start()
 
     def _on_remote_listed(self, items):
@@ -971,7 +973,7 @@ class FileManagerTab:
             messagebox.showerror("加载失败", f"无法加载文件: {name}")
             return
         try:
-            with open(tmp_path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(tmp_path, encoding='utf-8', errors='replace') as f:
                 content = f.read()
         except Exception:
             content = "读取文件失败"
@@ -1028,7 +1030,7 @@ class FileManagerTab:
     def _edit_local_file(self, full_path: str, name: str):
         self.app._set_status(f"正在编辑本地: {name}")
         try:
-            with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(full_path, encoding='utf-8', errors='replace') as f:
                 content = f.read()
         except Exception as e:
             messagebox.showerror("读取失败", f"无法读取文件: {e}")
