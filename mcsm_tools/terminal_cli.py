@@ -1,5 +1,7 @@
 import json
 import sys
+from typing import NoReturn
+
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.history import InMemoryHistory
@@ -138,6 +140,18 @@ def run_terminal():
         term.disconnect()
 
 
+def _exit_no_input() -> NoReturn:
+    print("需要交互式终端输入登录信息，请在配置中预先填写凭证", file=sys.stderr)
+    sys.exit(1)
+
+
+def _prompt(text: str) -> str:
+    try:
+        return input(text).strip()
+    except EOFError:
+        _exit_no_input()
+
+
 def _authenticate(api: MCSManagerAPI, cfg) -> None:
     if cfg.apikey:
         api.set_apikey(cfg.apikey)
@@ -160,9 +174,9 @@ def _authenticate(api: MCSManagerAPI, cfg) -> None:
             return
         clear_credentials()
 
-    choice = input("登录方式 (1=密码登录, 2=API Key): ").strip()
+    choice = _prompt("登录方式 (1=密码登录, 2=API Key): ")
     if choice == "2":
-        apikey = input("API Key: ").strip()
+        apikey = _prompt("API Key: ")
         api.set_apikey(apikey)
         if not api.validate_credentials():
             print("API Key 验证失败")
@@ -174,9 +188,12 @@ def _authenticate(api: MCSManagerAPI, cfg) -> None:
         username = cfg.username
         password = cfg.password
         if not username:
-            username = input("用户名: ").strip()
+            username = _prompt("用户名: ")
         if not password:
-            password = secure_input(f"密码 ({username}): " if username else "密码: ")
+            try:
+                password = secure_input(f"密码 ({username}): " if username else "密码: ")
+            except (EOFError, OSError):
+                _exit_no_input()
         if not api.login(username, password):
             print(f"登录失败: {api.last_error or '请检查用户名密码'}")
             sys.exit(1)
