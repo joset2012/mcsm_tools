@@ -146,11 +146,14 @@ class FileManagerTab:
         ttk.Button(toolbar, text="返回上级", command=self._go_up).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="刷新", command=self._refresh_remote).pack(side=tk.LEFT, padx=2)
 
-        paned = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True, pady=2)
+        paned = ttk.Frame(self.frame)
+        paned.pack(fill=tk.BOTH, expand=True)
+        paned.rowconfigure(0, weight=1)
+        paned.columnconfigure(0, weight=1)
+        paned.columnconfigure(1, weight=1)
 
         left_frame = ttk.LabelFrame(paned, text="本地文件")
-        paned.add(left_frame, weight=1)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
 
         local_path_frame = ttk.Frame(left_frame)
         local_path_frame.pack(fill=tk.X)
@@ -174,7 +177,7 @@ class FileManagerTab:
         self._local_tree.configure(yscrollcommand=local_scroll.set)
 
         right_frame = ttk.LabelFrame(paned, text="远程文件")
-        paned.add(right_frame, weight=1)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 0))
 
         path_frame = ttk.Frame(right_frame)
         path_frame.pack(fill=tk.X)
@@ -201,13 +204,23 @@ class FileManagerTab:
         remote_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self._remote_tree.configure(yscrollcommand=remote_scroll.set)
 
-        self._progress_bar = ttk.Progressbar(self.frame, mode='determinate')
-        self._progress_label = ttk.Label(self.frame, text="")
-        self._progress_bar.pack(fill=tk.X, pady=1)
-        self._progress_label.pack()
+        self._progress_bar = None
+        self._progress_label = None
 
         self._refresh_local()
         self._refresh_remote()
+
+    def _show_progress(self):
+        if not self._progress_bar:
+            self._progress_bar = ttk.Progressbar(self.frame, mode='determinate')
+            self._progress_label = ttk.Label(self.frame, text="")
+        self._progress_bar.pack(fill=tk.X, pady=1)
+        self._progress_label.pack()
+
+    def _hide_progress(self):
+        if self._progress_bar:
+            self._progress_bar.pack_forget()
+            self._progress_label.pack_forget()
 
     def _refresh_local(self):
         self._local_tree.delete(*self._local_tree.get_children())
@@ -308,6 +321,7 @@ class FileManagerTab:
         remote_path = _join_path(self._current_remote_dir, name)
 
         if ext == ".zip":
+            self._show_progress()
             self._progress_label.config(text=f"正在解压: {name}")
             self._progress_bar["value"] = 0
 
@@ -328,6 +342,7 @@ class FileManagerTab:
             self._on_extract_result(False, "7-Zip 未安装，无法解压非 .zip 格式", None)
             return
 
+        self._show_progress()
         self._progress_label.config(text=f"正在下载: {name}")
         self._progress_bar["value"] = 0
 
@@ -417,8 +432,7 @@ class FileManagerTab:
     def _on_extract_result(self, ok: bool, msg: str, tmp_dir: str | None):
         if tmp_dir is not None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-        self._progress_label.config(text="")
-        self._progress_bar["value"] = 0
+        self._hide_progress()
         if ok:
             self.app._set_status(msg)
             self._refresh_remote()
@@ -427,8 +441,7 @@ class FileManagerTab:
             messagebox.showerror("解压失败", msg)
 
     def _on_remote_unzip_result(self, ok: bool, name: str):
-        self._progress_label.config(text="")
-        self._progress_bar["value"] = 0
+        self._hide_progress()
         if ok:
             self.app._set_status(f"解压完成: {name}")
             self._refresh_remote()
@@ -508,6 +521,7 @@ class FileManagerTab:
             name += ".zip"
         archive_path = _join_path(self._current_remote_dir, name)
         targets = [_join_path(self._current_remote_dir, n) for n in names]
+        self._show_progress()
         self._progress_label.config(text=f"正在压缩: {name}")
         self._progress_bar["value"] = 0
 
@@ -538,6 +552,7 @@ class FileManagerTab:
         compressed_dir = os.path.join(os.getcwd(), "Compressed")
         os.makedirs(compressed_dir, exist_ok=True)
         local_path = os.path.join(compressed_dir, name)
+        self._show_progress()
         self._progress_label.config(text=f"正在下载: {name}")
         self._progress_bar["value"] = 0
         tmp_dir = tempfile.mkdtemp(prefix="mcsm_compress_")
@@ -624,8 +639,7 @@ class FileManagerTab:
             return False
 
     def _on_compress_result(self, ok: bool, msg: str, is_remote: bool):
-        self._progress_label.config(text="")
-        self._progress_bar["value"] = 0
+        self._hide_progress()
         if ok:
             self.app._set_status(f"压缩完成: {msg}")
             if is_remote:
@@ -856,6 +870,7 @@ class FileManagerTab:
             return
         remote_dir = self._current_remote_dir
 
+        self._show_progress()
         self._progress_label.config(text=f"正在上传: {name}")
         self._progress_bar["value"] = 0
 
@@ -874,7 +889,7 @@ class FileManagerTab:
         threading.Thread(target=do_upload, daemon=True).start()
 
     def _on_upload_result(self, ok: bool, name: str):
-        self._progress_label.config(text="")
+        self._hide_progress()
         if ok:
             self.app._set_status(f"上传成功: {name}")
             self._refresh_remote()
@@ -905,6 +920,7 @@ class FileManagerTab:
         if not save_path:
             return
 
+        self._show_progress()
         self._progress_label.config(text=f"正在下载: {name}")
         self._progress_bar["value"] = 0
 
@@ -1075,7 +1091,7 @@ class FileManagerTab:
             win.destroy()
 
     def _on_download_result(self, ok: bool, name: str):
-        self._progress_label.config(text="")
+        self._hide_progress()
         if ok:
             self.app._set_status(f"下载成功: {name}")
             self._refresh_local()

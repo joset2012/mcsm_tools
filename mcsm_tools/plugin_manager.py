@@ -7,7 +7,7 @@ from .font_helper import MONO_FONT
 from .theme import Nord
 
 
-PLUGIN_FOLDERS = ["plugins", "mods", "mods/server"]
+PLUGIN_FOLDERS = ["plugins", "mods"]
 
 
 class Plugin:
@@ -15,9 +15,7 @@ class Plugin:
         self.name = name
         self.path = path
         self.is_dir = is_dir
-        self.is_disabled = name.endswith(".disabled") or any(
-            name.lower().endswith(f".jar.disabled")
-        )
+        self.is_disabled = name.endswith(".disabled") or name.lower().endswith(".jar.disabled")
         self.is_jar = name.lower().endswith(".jar") or name.lower().endswith(".litemod") or name.lower().endswith(".zip")
 
     @property
@@ -47,8 +45,9 @@ class PluginManagerTab:
         self.frame = ttk.Frame(notebook)
         self._current_folder = "plugins"
         self._plugins: list[Plugin] = []
+        self._detected = False
         self._build_ui()
-        self._refresh_list()
+        self._auto_detect_folder()
 
     def _build_ui(self):
         toolbar = ttk.Frame(self.frame)
@@ -89,6 +88,39 @@ class PluginManagerTab:
         self._tree.configure(yscrollcommand=scroll.set)
 
         self._tree.bind("<Double-1>", lambda e: self._toggle_plugin())
+
+    def _set_status(self, text: str):
+        self._status_label.config(text=text)
+
+    def _auto_detect_folder(self):
+        if not self.app.api.is_authenticated or not self.app._daemon_id:
+            self._detected = True
+            self._refresh_list()
+            return
+
+        def do_detect():
+            detected = None
+            for folder in ["plugins", "mods"]:
+                try:
+                    items = self.app.api.list_files(
+                        self.app._daemon_id, self.app._instance_uuid, f"/{folder}"
+                    )
+                    if items is not None:
+                        detected = folder
+                        break
+                except Exception:
+                    pass
+            self.app.root.after(0, lambda f=detected: self._on_detected(f))
+
+        threading.Thread(target=do_detect, daemon=True).start()
+
+    def _on_detected(self, folder: str | None):
+        self._detected = True
+        if folder:
+            self._current_folder = folder
+            self._folder_var.set(folder)
+            self._set_status(f"检测到服务器目录: /{folder}")
+        self._refresh_list()
 
     def _switch_folder(self):
         self._current_folder = self._folder_var.get()

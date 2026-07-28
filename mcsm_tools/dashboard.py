@@ -178,7 +178,12 @@ class DashboardTab:
 
                 mem_raw = instance.get("memory", None)
                 if isinstance(mem_raw, (int, float)):
-                    mem_mb = mem_raw / (1024 * 1024) if mem_raw > 1e9 else mem_raw / 1024 if mem_raw > 1e6 else mem_raw
+                    if mem_raw > 1e9:
+                        mem_mb = mem_raw / (1024 * 1024)
+                    elif mem_raw > 1e6:
+                        mem_mb = mem_raw / 1024
+                    else:
+                        mem_mb = mem_raw
                     self._mem_history.append(mem_mb)
                     if len(self._mem_history) > MAX_POINTS:
                         self._mem_history.pop(0)

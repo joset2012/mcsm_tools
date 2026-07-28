@@ -26,6 +26,10 @@ pyinstaller ^
     --hidden-import engineio.client ^
     --hidden-import prompt_toolkit ^
     --hidden-import requests ^
+    --hidden-import PyQt5 ^
+    --hidden-import PyQt5.QtCore ^
+    --hidden-import PyQt5.QtGui ^
+    --hidden-import PyQt5.QtWidgets ^
     run.py
 
 echo.

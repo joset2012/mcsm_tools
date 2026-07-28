@@ -201,7 +201,7 @@ class MCSMGUI:
                   padding=[('selected', [18, 8])])
 
         style.configure('Treeview', background=Nord.bg_alt, foreground=Nord.fg,
-                        fieldbackground=Nord.bg_alt, borderwidth=0)
+                        fieldbackground=Nord.bg, borderwidth=0)
         style.map('Treeview', background=[('selected', Nord.bg_sel)])
 
         style.configure('Vertical.TScrollbar', background=Nord.bg_alt,
@@ -705,12 +705,12 @@ class MCSMGUI:
             self.api.refresh_auth_from_config(self.cfg)
             if not self.api.is_authenticated:
                 messagebox.showwarning("未登录", "请在设置中登录")
-                self.notebook.select(3)
+                self.notebook.select(7)
                 return
 
         if not self._daemon_id or not self._instance_uuid:
             messagebox.showwarning("未配置", "请先配置或自动发现实例")
-            self.notebook.select(3)
+            self.notebook.select(7)
             return
 
         self._set_status("正在连接终端...")
@@ -1182,7 +1182,7 @@ class MCSMGUI:
         return cfg
 
     def _show_settings(self):
-        self.notebook.select(3)
+        self.notebook.select(7)
 
     def _show_about(self):
         from . import __version__

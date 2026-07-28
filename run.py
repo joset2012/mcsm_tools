@@ -9,7 +9,10 @@ system_check()
 if len(sys.argv) > 1 and sys.argv[1] == "--terminal":
     from mcsm_tools.terminal_cli import run_terminal
     run_terminal()
-else:
+elif len(sys.argv) > 1 and sys.argv[1] == "--tk":
     from mcsm_tools.gui import MCSMGUI
     app = MCSMGUI()
     app.run()
+else:
+    from mcsm_tools.gui_pyqt import main as pyqt_main
+    pyqt_main()
