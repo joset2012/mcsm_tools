@@ -17,34 +17,8 @@ from .command_history import CommandHistory
 from . import __version__
 from .theme import Nord
 from .font_helper import MONO_FONT, ensure_font_installed
-
-
-_ANSI_RE = re.compile(r'\x1b\[([\d;]*)m')
-
-
-def parse_ansi(text: str):
-    parts = _ANSI_RE.split(text)
-    segments = []
-    fg = None
-    bg = None
-    bold = False
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            segments.append((fg, bg, bold, part))
-        else:
-            codes = part.split(';') if part else []
-            for c in codes:
-                if c == '' or c == '0':
-                    fg = bg = None; bold = False
-                elif c == '1':
-                    bold = True
-                elif c == '22':
-                    bold = False
-                elif c in Nord.ansi_colors:
-                    fg = Nord.ansi_colors[c]
-                elif c in Nord.ansi_bg:
-                    bg = Nord.ansi_bg[c]
-    return segments
+from .ansi import parse_ansi
+from .utils import app_data_dir
 
 
 class ConsoleText(tk.Text):
@@ -150,9 +124,7 @@ class MCSMGUI:
 
     def _get_term_log_dir(self) -> str:
         uid = f"{self._daemon_id}_{self._instance_uuid}" if self._daemon_id and self._instance_uuid else "default"
-        d = os.path.expanduser(os.path.join("~", ".mcsm_tools", "terminal", uid))
-        os.makedirs(d, exist_ok=True)
-        return d
+        return app_data_dir("terminal", uid)
 
     def _build_ui(self):
         self._apply_nord_theme()

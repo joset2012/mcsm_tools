@@ -10,6 +10,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from .font_helper import MONO_FONT
 from .system_check import SEVEN_ZIP_PATH
 from .theme import Nord
+from .utils import format_size, format_time, format_timestamp
 
 
 EDITABLE_EXTS = {".txt", ".log", ".json", ".yml", ".yaml", ".xml", ".toml",
@@ -235,8 +236,8 @@ class FileManagerTab:
                 full = os.path.join(self._local_dir, name)
                 try:
                     s = os.stat(full)
-                    size = self._format_size(s.st_size)
-                    mtime = self._format_time(s.st_mtime)
+                    size = format_size(s.st_size)
+                    mtime = format_time(s.st_mtime)
                 except OSError:
                     size = "-"
                     mtime = "-"
@@ -245,8 +246,8 @@ class FileManagerTab:
                 full = os.path.join(self._local_dir, name)
                 try:
                     s = os.stat(full)
-                    size = self._format_size(s.st_size)
-                    mtime = self._format_time(s.st_mtime)
+                    size = format_size(s.st_size)
+                    mtime = format_time(s.st_mtime)
                 except OSError:
                     size = "-"
                     mtime = "-"
@@ -703,8 +704,8 @@ class FileManagerTab:
             self._remote_tree.insert("", tk.END, text=_display_name(name, is_dir=True), values=("", ""))
         for f in files:
             name = _get_name(f)
-            size = self._format_size(f.get("size", 0) or 0)
-            mtime = self._format_timestamp(f.get("mtime", 0) or 0)
+            size = format_size(f.get("size", 0) or 0)
+            mtime = format_timestamp(f.get("mtime", 0) or 0)
             self._remote_tree.insert("", tk.END, text=_display_name(name), values=(size, mtime))
 
     def _navigate_to(self, path: str):
@@ -1148,24 +1149,3 @@ class FileManagerTab:
         else:
             messagebox.showerror("删除失败", f"删除 '{name}' 失败")
 
-    @staticmethod
-    def _format_size(size: int) -> str:
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
-
-    @staticmethod
-    def _format_time(timestamp: float) -> str:
-        from datetime import datetime
-        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
-
-    @staticmethod
-    def _format_timestamp(ts) -> str:
-        if not ts or ts == 0:
-            return "-"
-        from datetime import datetime
-        if isinstance(ts, (int, float)):
-            return datetime.fromtimestamp(ts / 1000 if ts > 1e10 else ts).strftime("%Y-%m-%d %H:%M")
-        return str(ts)[:19].replace("GMT", "").strip() if isinstance(ts, str) else "-"

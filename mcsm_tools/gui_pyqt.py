@@ -4,7 +4,6 @@ import re
 import sys
 import shutil
 import tempfile
-from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
@@ -28,6 +27,8 @@ from mcsm_tools.config import load_config, save_config, AppConfig
 from mcsm_tools.terminal import MCSMTerminal
 from mcsm_tools.command_history import CommandHistory
 from mcsm_tools.qt_nord import QSS, apply_nord_palette, Nord
+from mcsm_tools.ansi import parse_ansi
+from mcsm_tools.utils import filename_timestamp, format_size, format_time, read_json, write_json
 
 
 class AppIcons:
@@ -324,49 +325,6 @@ class AppIcons:
         p.drawLine(int(s * 0.25), int(s * 0.35), int(s * 0.4), int(s * 0.5))
         p.drawLine(int(s * 0.25), int(s * 0.65), int(s * 0.4), int(s * 0.5))
         p.drawLine(int(s * 0.5), int(s * 0.65), int(s * 0.7), int(s * 0.65))
-
-
-_ANSI_RE = re.compile(r'\x1b\[([\d;]*)m')
-
-ANSI_COLORS = {
-    '30': Nord.polar_night_1, '31': Nord.aurora_red, '32': Nord.aurora_green,
-    '33': Nord.aurora_yellow, '34': Nord.frost_4, '35': Nord.aurora_pink,
-    '36': Nord.frost_1, '37': Nord.snow_storm_1,
-    '90': Nord.polar_night_4, '91': Nord.aurora_red, '92': Nord.aurora_green,
-    '93': Nord.aurora_yellow, '94': Nord.frost_3, '95': Nord.aurora_pink,
-    '96': Nord.frost_2, '97': Nord.snow_storm_3,
-}
-ANSI_BG = {
-    '40': Nord.polar_night_1, '41': Nord.aurora_red, '42': Nord.aurora_green,
-    '43': Nord.aurora_yellow, '44': Nord.frost_4, '45': Nord.aurora_pink,
-    '46': Nord.frost_1, '47': Nord.snow_storm_2,
-}
-
-
-def parse_ansi(text: str):
-    parts = _ANSI_RE.split(text)
-    segments = []
-    fg = None
-    bg = None
-    bold = False
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            segments.append((fg, bg, bold, part))
-        else:
-            codes = part.split(';') if part else []
-            for c in codes:
-                if c == '' or c == '0':
-                    fg = bg = None
-                    bold = False
-                elif c == '1':
-                    bold = True
-                elif c == '22':
-                    bold = False
-                elif c in ANSI_COLORS:
-                    fg = ANSI_COLORS[c]
-                elif c in ANSI_BG:
-                    bg = ANSI_BG[c]
-    return segments
 
 
 class LogHighlighter(QSyntaxHighlighter):
@@ -996,11 +954,11 @@ class FileManagerTab(QWidget):
                 is_dir = os.path.isdir(full)
                 try:
                     size = os.path.getsize(full) if not is_dir else 0
-                    mtime = datetime.fromtimestamp(os.path.getmtime(full)).strftime("%Y-%m-%d %H:%M")
+                    mtime = format_time(os.path.getmtime(full))
                 except Exception:
                     size = 0
                     mtime = ""
-                ti = QTreeWidgetItem([name, self._format_size(size) if not is_dir else "", mtime])
+                ti = QTreeWidgetItem([name, format_size(size) if not is_dir else "", mtime])
                 ti.setData(0, Qt.UserRole, {"is_dir": is_dir, "name": name, "path": full})
                 ti.setIcon(0, self._file_icon(name, is_dir))
                 font = ti.font(0)
@@ -1079,7 +1037,7 @@ class FileManagerTab(QWidget):
             size = item.get("size", item.get("fileSize", 0))
             mtime = item.get("modTime", item.get("mtime", ""))
             if isinstance(size, (int, float)):
-                size_str = self._format_size(size)
+                size_str = format_size(size)
             else:
                 size_str = str(size)
             typ = "文件夹" if is_dir else "文件"
@@ -1366,13 +1324,6 @@ class FileManagerTab(QWidget):
             if ok:
                 self._load_files(self.current_path)
 
-    @staticmethod
-    def _format_size(size):
-        for unit in ["B", "KB", "MB", "GB"]:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
 
 
 class LogViewerTab(QWidget):
@@ -1599,7 +1550,7 @@ class BackupTab(QWidget):
             mtime = item.get("modTime", item.get("mtime", ""))
             self.table.setItem(i, 0, QTableWidgetItem(name))
             if isinstance(size, (int, float)):
-                self.table.setItem(i, 1, QTableWidgetItem(self._fmt_size(size)))
+                self.table.setItem(i, 1, QTableWidgetItem(format_size(size)))
             else:
                 self.table.setItem(i, 1, QTableWidgetItem(str(size)))
             self.table.setItem(i, 2, QTableWidgetItem(str(mtime)))
@@ -1613,7 +1564,7 @@ class BackupTab(QWidget):
         if not dirs:
             QMessageBox.warning(self, "提示", "请至少选择一个目录")
             return
-        backup_name = dlg.get_backup_name() or f"backup-{self._ts()}.zip"
+        backup_name = dlg.get_backup_name() or f"backup-{filename_timestamp()}.zip"
         for d in dirs:
             self.api.compress_files(
                 self.daemon_id, self.instance_uuid, "/", [d]
@@ -1660,17 +1611,6 @@ class BackupTab(QWidget):
         else:
             QMessageBox.warning(self, "失败", "删除失败")
 
-    @staticmethod
-    def _fmt_size(size):
-        for u in ["B", "KB", "MB", "GB"]:
-            if size < 1024:
-                return f"{size:.1f} {u}"
-            size /= 1024
-        return f"{size:.1f} TB"
-
-    @staticmethod
-    def _ts():
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 class PlayerTab(QWidget):
@@ -1727,19 +1667,28 @@ class PlayerTab(QWidget):
                 return path
         return "/" + filename
 
-    def _load_data(self):
-        idx = self.tab_combo.currentIndex()
-        filename = self._files.get(idx, "whitelist.json")
-        path = self._get_remote_path(filename)
+    def _fetch_current(self):
+        """Download the active list to a temp file; returns ``(data, tmp_path)``."""
+        filename = self._files.get(self.tab_combo.currentIndex(), "whitelist.json")
         tmp = os.path.join(tempfile.gettempdir(), f"mcsm_{filename}")
-        if self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
-            try:
-                with open(tmp, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                data = []
-            self._display_data(data)
-            os.unlink(tmp)
+        path = self._get_remote_path(filename)
+        if not self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
+            return None, tmp
+        return read_json(tmp, []), tmp
+
+    def _commit_current(self, data, tmp):
+        """Upload the edited list back and refresh the table."""
+        write_json(tmp, data, indent=2)
+        self.api.upload_file(tmp, "/", self.daemon_id, self.instance_uuid)
+        os.unlink(tmp)
+        self._load_data()
+
+    def _load_data(self):
+        data, tmp = self._fetch_current()
+        if data is None:
+            return
+        self._display_data(data)
+        os.unlink(tmp)
 
     def _display_data(self, data):
         if isinstance(data, list):
@@ -1759,17 +1708,9 @@ class PlayerTab(QWidget):
 
     def _edit_entry(self, item):
         row = item.row()
-        idx = self.tab_combo.currentIndex()
-        filename = self._files.get(idx, "whitelist.json")
-        path = self._get_remote_path(filename)
-        tmp = os.path.join(tempfile.gettempdir(), f"mcsm_{filename}")
-        if not self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
+        data, tmp = self._fetch_current()
+        if data is None:
             return
-        try:
-            with open(tmp, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = []
         col = 1
         old_val = self.table.item(row, col).text() if self.table.item(row, col) else ""
         new_val, ok = QInputDialog.getText(self, "编辑", "新值:", text=old_val)
@@ -1785,64 +1726,38 @@ class PlayerTab(QWidget):
                 if row < len(keys):
                     old_key = keys[row]
                     data[new_val.strip()] = data.pop(old_key)
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            self.api.upload_file(tmp, "/", self.daemon_id, self.instance_uuid)
-            os.unlink(tmp)
-            self._load_data()
+            self._commit_current(data, tmp)
 
     def _add_entry(self):
         name, ok = QInputDialog.getText(self, "添加", "玩家名称/UUID:")
         if ok and name.strip():
-            idx = self.tab_combo.currentIndex()
-            filename = self._files.get(idx, "whitelist.json")
-            path = self._get_remote_path(filename)
-            tmp = os.path.join(tempfile.gettempdir(), f"mcsm_{filename}")
-            if self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
-                try:
-                    with open(tmp, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    data = []
-                if isinstance(data, list):
-                    data.append({"name": name.strip(), "uuid": ""})
-                else:
-                    data[name.strip()] = ""
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-                self.api.upload_file(tmp, "/", self.daemon_id, self.instance_uuid)
-                os.unlink(tmp)
-                self._load_data()
+            data, tmp = self._fetch_current()
+            if data is None:
+                return
+            if isinstance(data, list):
+                data.append({"name": name.strip(), "uuid": ""})
+            else:
+                data[name.strip()] = ""
+            self._commit_current(data, tmp)
 
     def _remove_selected(self):
         rows = set(r.row() for r in self.table.selectedIndexes())
         if not rows:
             return
-        idx = self.tab_combo.currentIndex()
-        filename = self._files.get(idx, "whitelist.json")
-        path = self._get_remote_path(filename)
-        tmp = os.path.join(tempfile.gettempdir(), f"mcsm_{filename}")
-        if self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
-            try:
-                with open(tmp, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                data = []
-            indices = sorted(rows, reverse=True)
-            if isinstance(data, list):
-                for ri in indices:
-                    if ri < len(data):
-                        data.pop(ri)
-            else:
-                keys = list(data.keys())
-                for ri in indices:
-                    if ri < len(keys):
-                        data.pop(keys[ri])
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            self.api.upload_file(tmp, "/", self.daemon_id, self.instance_uuid)
-            os.unlink(tmp)
-            self._load_data()
+        data, tmp = self._fetch_current()
+        if data is None:
+            return
+        indices = sorted(rows, reverse=True)
+        if isinstance(data, list):
+            for ri in indices:
+                if ri < len(data):
+                    data.pop(ri)
+        else:
+            keys = list(data.keys())
+            for ri in indices:
+                if ri < len(keys):
+                    data.pop(keys[ri])
+        self._commit_current(data, tmp)
 
 
 class PluginTab(QWidget):
@@ -1918,7 +1833,7 @@ class PluginTab(QWidget):
             name = item.get("name", "?")
             size = item.get("size", 0)
             self.table.setItem(i, 0, QTableWidgetItem(name))
-            self.table.setItem(i, 1, QTableWidgetItem(self._fmt_size(size)))
+            self.table.setItem(i, 1, QTableWidgetItem(format_size(size)))
             is_jar = name.endswith((".jar", ".py", ".js", ".litemod"))
             ext = ".disabled" if name.endswith(".disabled") else ""
             if ext:
@@ -1974,13 +1889,6 @@ class PluginTab(QWidget):
         self.api.delete_files(self.daemon_id, self.instance_uuid, targets)
         self._refresh()
 
-    @staticmethod
-    def _fmt_size(size):
-        for u in ["B", "KB", "MB", "GB"]:
-            if size < 1024:
-                return f"{size:.1f} {u}"
-            size /= 1024
-        return f"{size:.1f} TB"
 
 
 class SettingsDialog(QDialog):

@@ -2,30 +2,13 @@ import os
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from datetime import datetime
 
 from .font_helper import MONO_FONT
 from .theme import Nord
+from .utils import DATETIME_SEC_FMT, filename_timestamp, format_size, format_timestamp
 
 
 REMOTE_BACKUP_DIR = "/backups"
-
-
-def _format_size(size: int) -> str:
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
-
-
-def _parse_mtime(mtime) -> str:
-    if not mtime:
-        return "-"
-    from datetime import datetime
-    if isinstance(mtime, (int, float)):
-        return datetime.fromtimestamp(mtime / 1000 if mtime > 1e10 else mtime).strftime("%Y-%m-%d %H:%M:%S")
-    return str(mtime)[:19]
 
 
 def _get_name(item: dict) -> str:
@@ -117,8 +100,8 @@ class BackupManagerTab:
 
         for item in self._remote_items:
             name = _get_name(item)
-            size = _format_size(item.get("size", 0) or 0)
-            mtime = _parse_mtime(item.get("mtime", 0))
+            size = format_size(item.get("size", 0) or 0)
+            mtime = format_timestamp(item.get("mtime", 0), DATETIME_SEC_FMT)
             self._tree.insert("", tk.END, values=(name, size, mtime))
 
         self._status_label.config(text=f"{REMOTE_BACKUP_DIR}  —  共 {len(self._remote_items)} 个备份")
@@ -173,8 +156,7 @@ class BackupManagerTab:
             vars[opt] = v
 
         ttk.Label(frame, text="备份文件名:").pack(anchor=tk.W, pady=(4, 0))
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        name_var = tk.StringVar(value=f"backup_{timestamp}.zip")
+        name_var = tk.StringVar(value=f"backup_{filename_timestamp()}.zip")
         ttk.Entry(frame, textvariable=name_var).pack(fill=tk.X, pady=(2, 8))
 
         btn_frame = ttk.Frame(frame)

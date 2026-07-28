@@ -1,16 +1,17 @@
-import json
 import os
 from datetime import datetime
 
+from .utils import app_data_dir, read_json, write_json
 
-HISTORY_DIR = os.path.expanduser(os.path.join("~", ".mcsm_tools"))
+
+HISTORY_DIR = app_data_dir(create=False)
 HISTORY_FILE = os.path.join(HISTORY_DIR, "command_history.json")
 FAVORITES_FILE = os.path.join(HISTORY_DIR, "command_favorites.json")
 MAX_HISTORY = 500
 
 
 def _ensure_dir():
-    os.makedirs(HISTORY_DIR, exist_ok=True)
+    app_data_dir()
 
 
 class CommandHistory:
@@ -22,33 +23,15 @@ class CommandHistory:
         self._load()
 
     def _load(self):
-        try:
-            if os.path.exists(HISTORY_FILE):
-                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._history = data if isinstance(data, list) else []
-        except Exception:
-            self._history = []
-        try:
-            if os.path.exists(FAVORITES_FILE):
-                with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._favorites = data if isinstance(data, list) else []
-        except Exception:
-            self._favorites = []
+        history = read_json(HISTORY_FILE, [])
+        self._history = history if isinstance(history, list) else []
+        favorites = read_json(FAVORITES_FILE, [])
+        self._favorites = favorites if isinstance(favorites, list) else []
 
     def _save(self):
         _ensure_dir()
-        try:
-            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._history[-MAX_HISTORY:], f, ensure_ascii=False)
-        except Exception:
-            pass
-        try:
-            with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._favorites, f, ensure_ascii=False)
-        except Exception:
-            pass
+        write_json(HISTORY_FILE, self._history[-MAX_HISTORY:])
+        write_json(FAVORITES_FILE, self._favorites)
 
     def add(self, command: str):
         cmd = command.strip()

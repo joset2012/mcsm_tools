@@ -3,6 +3,8 @@ import sys
 import traceback
 import requests
 
+from .utils import to_http_url
+
 
 HEADERS_TEMPLATE = {
     "Accept": "application/json, text/plain, */*",
@@ -154,6 +156,29 @@ class MCSManagerAPI:
     def _delete(self, path: str, params: dict | None = None, json_data: dict | None = None) -> dict | None:
         return self._request("DELETE", path, params=params, json_data=json_data)
 
+    @staticmethod
+    def _is_ok(data: dict | None) -> bool:
+        return data is not None and data.get("status") == 200
+
+    @staticmethod
+    def _payload(data: dict | None) -> dict | None:
+        return data.get("data", {}) if MCSManagerAPI._is_ok(data) else None
+
+    @staticmethod
+    def _instance_params(daemon_id: str, instance_uuid: str, **extra) -> dict:
+        return {"daemonId": daemon_id, "uuid": instance_uuid, **extra}
+
+    def _stream_channel(self, path: str, **extra) -> tuple[str, str] | None:
+        """Request a temporary stream channel, returning ``(password, http_addr)``."""
+        d = self._payload(self._post(path, extra))
+        if not d:
+            return None
+        password = d.get("password")
+        addr = d.get("addr")
+        if not password or not addr:
+            return None
+        return password, to_http_url(addr)
+
     # ==================== Auth ====================
 
     def login_with_apikey(self, apikey: str) -> bool:
@@ -207,16 +232,13 @@ class MCSManagerAPI:
             return False
 
     def validate_credentials(self) -> bool:
-        data = self._get("/api/auth/", {"advanced": "true"})
-        return data is not None and data.get("status") == 200
+        return self._is_ok(self._get("/api/auth/", {"advanced": "true"}))
 
     # ==================== Instances ====================
 
     def list_instances(self) -> list[dict]:
-        data = self._get("/api/auth/", {"advanced": "true"})
-        if data and data.get("status") == 200:
-            return data.get("data", {}).get("instances", [])
-        return []
+        d = self._payload(self._get("/api/auth/", {"advanced": "true"}))
+        return d.get("instances", []) if d else []
 
     def auto_discover_instance(self, target_name: str | None = None) -> tuple[str, str] | None:
         instances = self.list_instances()
@@ -249,13 +271,7 @@ class MCSManagerAPI:
         return None
 
     def get_instance_info(self, daemon_id: str, instance_uuid: str) -> dict | None:
-        data = self._get("/api/instance", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        if data and data.get("status") == 200:
-            return data.get("data", {})
-        return None
+        return self._payload(self._get("/api/instance", self._instance_params(daemon_id, instance_uuid)))
 
     def get_instance_status(self, daemon_id: str, instance_uuid: str) -> dict:
         result = {"status": -1, "text": "未知", "addr": ""}
@@ -296,41 +312,29 @@ class MCSManagerAPI:
             return "停止中"
         return "未知"
 
+    def _instance_action(self, action: str, daemon_id: str, instance_uuid: str) -> bool:
+        return self._is_ok(self._get(
+            f"/api/protected_instance/{action}",
+            self._instance_params(daemon_id, instance_uuid),
+        ))
+
     def kill_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/kill", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        return data is not None and data.get("status") == 200
+        return self._instance_action("kill", daemon_id, instance_uuid)
 
     def open_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/open", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        return data is not None and data.get("status") == 200
+        return self._instance_action("open", daemon_id, instance_uuid)
 
     def stop_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/stop", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        return data is not None and data.get("status") == 200
+        return self._instance_action("stop", daemon_id, instance_uuid)
 
     def restart_instance(self, daemon_id: str, instance_uuid: str) -> bool:
-        data = self._get("/api/protected_instance/restart", {
-            "uuid": instance_uuid,
-            "daemonId": daemon_id,
-        })
-        return data is not None and data.get("status") == 200
+        return self._instance_action("restart", daemon_id, instance_uuid)
 
     def get_websocket_password(self, daemon_id: str, instance_uuid: str) -> tuple[str, str] | None:
-        data = self._post("/api/protected_instance/stream_channel", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        })
-        if data and data.get("status") == 200:
-            d = data.get("data", {})
+        data = self._post("/api/protected_instance/stream_channel",
+                          self._instance_params(daemon_id, instance_uuid))
+        d = self._payload(data)
+        if d:
             password = d.get("password")
             addr = d.get("addr")
             if password and addr:
@@ -340,23 +344,17 @@ class MCSManagerAPI:
     # ==================== Files ====================
 
     def list_files(self, daemon_id: str, instance_uuid: str, path: str = "/") -> list[dict] | None:
-        data = self._get("/api/files/list", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "target": path,
-            "page": 0,
-            "page_size": 100,
-            "file_name": "",
-        })
-        if data and data.get("status") == 200:
-            d = data.get("data")
-            if isinstance(d, list):
-                return d
-            if isinstance(d, dict):
-                items = d.get("items")
-                if items is not None:
-                    return items
-                return list(d.values())
+        d = self._payload(self._get("/api/files/list", self._instance_params(
+            daemon_id, instance_uuid,
+            target=path, page=0, page_size=100, file_name="",
+        )))
+        if isinstance(d, list):
+            return d
+        if isinstance(d, dict):
+            items = d.get("items")
+            if items is not None:
+                return items
+            return list(d.values())
         return None
 
     def upload_file(self, local_path: str, remote_dir: str,
@@ -367,24 +365,15 @@ class MCSManagerAPI:
 
         file_name = os.path.basename(local_path)
 
-        data = self._post("/api/files/upload", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "upload_dir": remote_dir,
-        })
-        if not data or data.get("status") != 200:
+        channel = self._stream_channel(
+            "/api/files/upload",
+            daemonId=daemon_id, uuid=instance_uuid, upload_dir=remote_dir,
+        )
+        if not channel:
             return False
 
-        d = data.get("data", {})
-        upload_password = d.get("password")
-        upload_addr = d.get("addr")
-        if not upload_password or not upload_addr:
-            return False
-
-        upload_url = upload_addr.replace("wss://", "https://")
-        if not upload_url.startswith("http"):
-            upload_url = f"https://{upload_url}"
-        upload_url = f"{upload_url}/upload/{upload_password}"
+        upload_password, upload_addr = channel
+        upload_url = f"{upload_addr}/upload/{upload_password}"
 
         try:
             reader = _ProgressReader(local_path, progress_callback)
@@ -402,24 +391,14 @@ class MCSManagerAPI:
     def download_file(self, daemon_id: str, instance_uuid: str,
                       file_path: str, local_path: str,
                       progress_callback=None) -> bool:
-        data = self._post("/api/files/download", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "file_name": file_path,
-        })
-        if not data or data.get("status") != 200:
+        channel = self._stream_channel(
+            "/api/files/download",
+            daemonId=daemon_id, uuid=instance_uuid, file_name=file_path,
+        )
+        if not channel:
             return False
 
-        d = data.get("data", {})
-        password = d.get("password")
-        addr = d.get("addr")
-        if not password or not addr:
-            return False
-
-        download_addr = addr.replace("wss://", "https://")
-        if not download_addr.startswith("http"):
-            download_addr = f"https://{download_addr}"
-
+        password, download_addr = channel
         file_name = os.path.basename(file_path)
         download_url = f"{download_addr}/download/{password}/{file_name}"
 
@@ -443,57 +422,44 @@ class MCSManagerAPI:
             return False
 
     def delete_files(self, daemon_id: str, instance_uuid: str, targets: list[str]) -> bool:
-        data = self._delete("/api/files", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"targets": targets})
-        return data is not None and data.get("status") == 200
+        return self._is_ok(self._delete("/api/files",
+                                        self._instance_params(daemon_id, instance_uuid),
+                                        json_data={"targets": targets}))
 
     def create_directory(self, daemon_id: str, instance_uuid: str, dir_path: str) -> bool:
-        data = self._post("/api/files/mkdir", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"target": dir_path})
-        return data is not None and data.get("status") == 200
+        return self._is_ok(self._post("/api/files/mkdir",
+                                      self._instance_params(daemon_id, instance_uuid),
+                                      json_data={"target": dir_path}))
 
     def move_files(self, daemon_id: str, instance_uuid: str, targets: list[list[str]]) -> bool:
-        data = self._put("/api/files/move", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"targets": targets})
-        return data is not None and data.get("status") == 200
+        return self._is_ok(self._put("/api/files/move",
+                                     self._instance_params(daemon_id, instance_uuid),
+                                     json_data={"targets": targets}))
 
     def get_file_info(self, daemon_id: str, instance_uuid: str, file_path: str) -> dict | None:
-        data = self._get("/api/files/info", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-            "target": file_path,
-        })
-        if data and data.get("status") == 200:
-            return data.get("data", {})
-        return None
+        return self._payload(self._get("/api/files/info",
+                                       self._instance_params(daemon_id, instance_uuid,
+                                                             target=file_path)))
 
     def touch_file(self, daemon_id: str, instance_uuid: str, file_path: str) -> bool:
-        data = self._post("/api/files/touch", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"target": file_path})
-        return data is not None and data.get("status") == 200
+        return self._is_ok(self._post("/api/files/touch",
+                                      self._instance_params(daemon_id, instance_uuid),
+                                      json_data={"target": file_path}))
 
     def decompress_files(self, daemon_id: str, instance_uuid: str,
                          source: str, target_dir: str,
                          code: str = "utf-8") -> bool:
-        data = self._post("/api/files/compress", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"type": 2, "code": code, "source": source, "targets": target_dir})
-        return data is not None and data.get("status") == 200
+        return self._compress(daemon_id, instance_uuid, 2, source, target_dir, code)
 
     def compress_files(self, daemon_id: str, instance_uuid: str,
                        source: str, targets: list[str],
                        code: str = "utf-8") -> bool:
-        data = self._post("/api/files/compress", {
-            "daemonId": daemon_id,
-            "uuid": instance_uuid,
-        }, json_data={"type": 1, "code": code, "source": source, "targets": targets})
-        return data is not None and data.get("status") == 200
+        return self._compress(daemon_id, instance_uuid, 1, source, targets, code)
+
+    def _compress(self, daemon_id: str, instance_uuid: str, op_type: int,
+                  source: str, targets, code: str) -> bool:
+        return self._is_ok(self._post(
+            "/api/files/compress",
+            self._instance_params(daemon_id, instance_uuid),
+            json_data={"type": op_type, "code": code, "source": source, "targets": targets},
+        ))

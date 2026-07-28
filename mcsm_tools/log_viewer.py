@@ -9,6 +9,7 @@ from datetime import datetime
 
 from .theme import Nord
 from .font_helper import MONO_FONT
+from .utils import format_size
 
 
 class LogViewerTab:
@@ -138,7 +139,7 @@ class LogViewerTab:
 
         lines = text.count('\n')
         size = len(text.encode('utf-8'))
-        self._stats_label.config(text=f"行数: {lines} | 大小: {self._format_size(size)}")
+        self._stats_label.config(text=f"行数: {lines} | 大小: {format_size(size)}")
 
     def _append_log_text(self, text: str):
         self._current_log += text
@@ -288,10 +289,3 @@ class LogViewerTab:
     def _refresh_content(self):
         self._load_selected_log()
 
-    @staticmethod
-    def _format_size(size: int) -> str:
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
