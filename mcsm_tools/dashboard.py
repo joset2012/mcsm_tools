@@ -1,4 +1,3 @@
-import math
 import threading
 import time
 import tkinter as tk
@@ -98,8 +97,6 @@ class DashboardTab:
 
     def _create_chart(self, parent, title: str, color: str):
         frame = ttk.LabelFrame(parent, text=title, padding=4)
-        canvas_w = 400
-        canvas_h = 160
         c = tk.Canvas(frame, bg=Nord.bg_alt, highlightthickness=0)
         c.pack(fill=tk.BOTH, expand=True)
         c.data = []

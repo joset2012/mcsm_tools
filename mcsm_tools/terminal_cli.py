@@ -1,5 +1,7 @@
 import json
 import sys
+from typing import NoReturn
+
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.history import InMemoryHistory
@@ -8,18 +10,15 @@ from prompt_toolkit.completion import WordCompleter
 
 from .config import load_config, save_config
 from .api import MCSManagerAPI
-from .terminal import MCSMTerminal
+from .terminal import MCSMTerminal, apply_player_events
 from .auth import save_credentials, load_credentials, clear_credentials, secure_input
-
-
-CONFIG_FILE = "mcsm_config.ini"
 
 
 def run_terminal():
     cfg = load_config()
     api = MCSManagerAPI(cfg.base_url)
 
-    token, cookie, session = _get_credentials(api, cfg)
+    _authenticate(api, cfg)
 
     daemon_id = cfg.daemon_id
     instance_uuid = cfg.instance_uuid
@@ -32,44 +31,27 @@ def run_terminal():
             cfg.daemon_id = daemon_id
             cfg.instance_uuid = instance_uuid
             save_config(cfg)
-            print(f"已保存实例 ID")
+            print("已保存实例 ID")
         else:
             print("自动发现失败")
             sys.exit(1)
 
     result = api.get_websocket_password(daemon_id, instance_uuid)
     if not result:
-        print("获取 WebSocket 连接信息失败")
+        print(f"获取 WebSocket 连接信息失败: {api.last_error}")
         sys.exit(1)
 
     password, addr = result
     term = MCSMTerminal()
 
-    online_players = set()
-    term.on_players_update = lambda players: None  # CLI handles player update differently
+    online_players: set[str] = set()
 
     history = InMemoryHistory()
-    term.on_connect = lambda: None
     term.on_disconnect = lambda: print("\n连接断开")
 
     def on_output(text):
         print(text, end='')
-        nonlocal online_players
-        import re
-        list_pat = re.compile(r'There are \d+ of a max of \d+ players online:\s*(.+)', re.IGNORECASE)
-        join_pat = re.compile(r'(\w+) joined the game')
-        leave_pat = re.compile(r'(\w+) left the game')
-        m = list_pat.search(text)
-        if m:
-            names = m.group(1).split(', ')
-            cleaned = [re.sub(r'§[0-9a-fklmnor]', '', n).strip() for n in names]
-            online_players = set(cleaned)
-        m = join_pat.search(text)
-        if m:
-            online_players.add(m.group(1))
-        m = leave_pat.search(text)
-        if m:
-            online_players.discard(m.group(1))
+        apply_player_events(text, online_players)
 
     term.on_output = on_output
 
@@ -88,7 +70,7 @@ def run_terminal():
 
     print("正在连接终端...")
     if not term.connect(addr, password, cfg.base_url):
-        print("连接失败")
+        print(term.last_error or "连接失败")
         sys.exit(1)
     print("终端已连接，输入 !help 查看帮助")
 
@@ -118,8 +100,7 @@ def run_terminal():
                     print("  !clear         清屏")
                     print("  exit/quit      退出")
                 elif command == '!clear':
-                    import os
-                    os.system('cls' if os.name == 'nt' else 'clear')
+                    print("\033[2J\033[H", end='')
                 elif command == '!upload':
                     if len(parts) < 2:
                         print("用法: !upload <本地路径> <远程目录>")
@@ -129,7 +110,7 @@ def run_terminal():
                             print("请指定本地路径和远程目录")
                         else:
                             ok = api.upload_file(args[0], args[1], daemon_id, instance_uuid)
-                            print("上传成功" if ok else "上传失败")
+                            print("上传成功" if ok else f"上传失败: {api.last_error}")
                 elif command == '!kill':
                     ok = api.kill_instance(daemon_id, instance_uuid)
                     print("实例已关闭" if ok else "关闭失败")
@@ -159,33 +140,43 @@ def run_terminal():
         term.disconnect()
 
 
-def _get_credentials(api: MCSManagerAPI, cfg) -> tuple[str, str, object]:
+def _exit_no_input() -> NoReturn:
+    print("需要交互式终端输入登录信息，请在配置中预先填写凭证", file=sys.stderr)
+    sys.exit(1)
+
+
+def _prompt(text: str) -> str:
+    try:
+        return input(text).strip()
+    except EOFError:
+        _exit_no_input()
+
+
+def _authenticate(api: MCSManagerAPI, cfg) -> None:
     if cfg.apikey:
         api.set_apikey(cfg.apikey)
         if api.validate_credentials():
             print("API Key 有效")
-            return api.token, api.cookie, api.session
-        else:
-            print("配置的 API Key 无效")
+            return
+        print("配置的 API Key 无效")
 
     if cfg.token:
         api.set_auth(cfg.token, cfg.cookie)
         if api.validate_credentials():
             print("配置的凭证有效")
-            return cfg.token, cfg.cookie, api.session
+            return
 
-    from .auth import load_credentials
     creds = load_credentials()
     if creds:
         api.set_auth(creds.token, creds.cookie)
         if api.validate_credentials():
             print("使用已保存的凭证")
-            return creds.token, creds.cookie, api.session
+            return
         clear_credentials()
 
-    choice = input("登录方式 (1=密码登录, 2=API Key): ").strip()
+    choice = _prompt("登录方式 (1=密码登录, 2=API Key): ")
     if choice == "2":
-        apikey = input("API Key: ").strip()
+        apikey = _prompt("API Key: ")
         api.set_apikey(apikey)
         if not api.validate_credentials():
             print("API Key 验证失败")
@@ -197,23 +188,22 @@ def _get_credentials(api: MCSManagerAPI, cfg) -> tuple[str, str, object]:
         username = cfg.username
         password = cfg.password
         if not username:
-            username = input("用户名: ").strip()
+            username = _prompt("用户名: ")
         if not password:
-            password = secure_input(f"密码 ({username}): " if username else "密码: ")
+            try:
+                password = secure_input(f"密码 ({username}): " if username else "密码: ")
+            except (EOFError, OSError):
+                _exit_no_input()
         if not api.login(username, password):
-            print("登录失败")
+            print(f"登录失败: {api.last_error or '请检查用户名密码'}")
             sys.exit(1)
-        try:
-            save_credentials(api.token, api.cookie, api.session)
-        except Exception:
-            pass
+        save_credentials(api.token, api.cookie, api.session)
         cfg.username = username
         cfg.password = password
         cfg.token = api.token
         cfg.cookie = api.cookie
 
     save_config(cfg)
-    return api.token, api.cookie, api.session
 
 
 if __name__ == "__main__":

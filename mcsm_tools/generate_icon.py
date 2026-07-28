@@ -35,7 +35,6 @@ def draw_terminal(size):
         fill=SCREEN_BG,
     )
 
-    pw = max(1, size // 64)
     fs = max(4, sr // 2)
 
     bracket_y = cy - sr // 4

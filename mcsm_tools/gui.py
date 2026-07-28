@@ -5,14 +5,13 @@ import shutil
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
-from datetime import datetime
+from tkinter import ttk, messagebox, filedialog
 
 
 from .config import AppConfig, load_config, save_config
 from .api import MCSManagerAPI
 from .terminal import MCSMTerminal
-from .auth import save_credentials, load_credentials, clear_credentials
+from .auth import save_credentials, clear_credentials
 from .command_history import CommandHistory
 from . import __version__
 from .theme import Nord
@@ -35,7 +34,8 @@ def parse_ansi(text: str):
             codes = part.split(';') if part else []
             for c in codes:
                 if c == '' or c == '0':
-                    fg = bg = None; bold = False
+                    fg = bg = None
+                    bold = False
                 elif c == '1':
                     bold = True
                 elif c == '22':
@@ -69,7 +69,6 @@ class ConsoleText(tk.Text):
 
     def append(self, text: str, parse_ansi_codes=True):
         self.config(state=tk.NORMAL)
-        end = self.index(tk.END + '-1c')
         if parse_ansi_codes and '\x1b[' in text:
             for fg, bg, bold, segment in parse_ansi(text):
                 if not segment:
@@ -539,8 +538,7 @@ class MCSMGUI:
         self.cfg.terminal_memory = self._cfg_term_memory.get()
         self.cfg.show_exit_dialog = self._cfg_show_exit.get()
         save_config(self.cfg)
-        self.api.base_url = self.cfg.base_url
-        self.api._update_headers()
+        self.api.set_base_url(self.cfg.base_url)
         if self.cfg.apikey:
             self.api.set_apikey(self.cfg.apikey)
         elif self.cfg.token:
@@ -1012,7 +1010,7 @@ class MCSMGUI:
 
                 self.root.after(0, lambda: self._on_world_download_result(ok, save_path))
             except Exception as e:
-                self.root.after(0, lambda: self._on_world_download_result(False, str(e)))
+                self.root.after(0, lambda err=str(e): self._on_world_download_result(False, err))
 
         threading.Thread(target=do_download, daemon=True).start()
 
@@ -1063,7 +1061,7 @@ class MCSMGUI:
                 self._term_log_file = None
             if os.path.exists(a_path):
                 try:
-                    with open(a_path, "r", encoding="utf-8") as f:
+                    with open(a_path, encoding="utf-8") as f:
                         prev = f.read()
                     if prev:
                         self._term_output.clear()
@@ -1185,7 +1183,6 @@ class MCSMGUI:
         self.notebook.select(7)
 
     def _show_about(self):
-        from . import __version__
         messagebox.showinfo("关于 mcsm-tools",
                             f"mcsm-tools v{__version__}\n\n"
                             "MCSManager 服务器管理工具\n"

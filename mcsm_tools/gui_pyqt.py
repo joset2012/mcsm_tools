@@ -2,7 +2,6 @@ import json
 import os
 import re
 import sys
-import shutil
 import tempfile
 from datetime import datetime
 
@@ -13,18 +12,16 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QDialog, QTextEdit, QListWidget, QListWidgetItem,
     QHeaderView, QAbstractItemView,
     QTreeWidget, QTreeWidgetItem, QProgressBar, QTableWidget,
-    QTableWidgetItem, QFileDialog, QMenu, QInputDialog, QFrame,
-    QScrollArea, QPlainTextEdit,
+    QTableWidgetItem, QFileDialog, QMenu, QInputDialog, QPlainTextEdit,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QEvent, QRect, QSize, QRectF, QPointF
 from PyQt5.QtGui import (
-    QFont, QTextCursor, QColor, QPainter, QPen, QPalette, QFontMetrics,
-    QTextCharFormat, QSyntaxHighlighter, QTextBlockFormat, QTextDocument,
-    QKeySequence, QPixmap, QIcon, QPainterPath,
+    QFont, QTextCursor, QColor, QPainter, QPen, QFontMetrics,
+    QTextCharFormat, QSyntaxHighlighter, QPixmap, QIcon, QPainterPath,
 )
 
 from mcsm_tools.api import MCSManagerAPI
-from mcsm_tools.config import load_config, save_config, AppConfig
+from mcsm_tools.config import load_config, save_config
 from mcsm_tools.terminal import MCSMTerminal
 from mcsm_tools.command_history import CommandHistory
 from mcsm_tools.qt_nord import QSS, apply_nord_palette, Nord
@@ -584,8 +581,7 @@ class ConnectTab(QWidget):
 
     def _connect(self):
         self.config.base_url = self.base_url.text().strip()
-        self.api.base_url = self.config.base_url
-        self.api._update_headers()
+        self.api.set_base_url(self.config.base_url)
 
         apikey = self.apikey.text().strip()
         username = self.username.text().strip()
@@ -1245,7 +1241,7 @@ class FileManagerTab(QWidget):
             QMessageBox.warning(self, "失败", "下载文件失败")
             return
         try:
-            with open(tmp, "r", encoding="utf-8", errors="replace") as f:
+            with open(tmp, encoding="utf-8", errors="replace") as f:
                 content = f.read()
         except Exception:
             QMessageBox.warning(self, "失败", "读取文件失败")
@@ -1333,7 +1329,6 @@ class FileManagerTab(QWidget):
             return
         name, ok = QInputDialog.getText(self, "压缩", "压缩包名称 (不含扩展名):", text="archive")
         if ok and name.strip():
-            zip_path = self.current_path.rstrip("/") + "/" + name.strip() + ".zip"
             ok = self.api.compress_files(
                 self.daemon_id, self.instance_uuid,
                 self.current_path,
@@ -1477,7 +1472,7 @@ class LogViewerTab(QWidget):
                     with gzip.open(tmp, 'rt', encoding='utf-8', errors='replace') as f:
                         self._log_text = f.read()
                 else:
-                    with open(tmp, 'r', encoding='utf-8', errors='replace') as f:
+                    with open(tmp, encoding='utf-8', errors='replace') as f:
                         self._log_text = f.read()
             except Exception:
                 self._log_text = "读取文件失败"
@@ -1499,7 +1494,7 @@ class LogViewerTab(QWidget):
             self.log_output.setPlainText(self._log_text)
         else:
             lines = self._log_text.split('\n')
-            filtered = '\n'.join(l for l in lines if keyword in l.lower())
+            filtered = '\n'.join(line for line in lines if keyword in line.lower())
             self.log_output.setPlainText(filtered)
         sb = self.log_output.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -1622,7 +1617,7 @@ class BackupTab(QWidget):
         self._refresh()
 
     def _download_selected(self):
-        rows = set(r.row() for r in self.table.selectedIndexes())
+        rows = {r.row() for r in self.table.selectedIndexes()}
         if not rows:
             return
         dir_path = QFileDialog.getExistingDirectory(self, "选择下载目录")
@@ -1644,7 +1639,7 @@ class BackupTab(QWidget):
         QMessageBox.information(self, "完成", "下载完成")
 
     def _delete_selected(self):
-        rows = set(r.row() for r in self.table.selectedIndexes())
+        rows = {r.row() for r in self.table.selectedIndexes()}
         if not rows:
             return
         r = QMessageBox.question(self, "确认删除", f"删除 {len(rows)} 个备份？",
@@ -1734,7 +1729,7 @@ class PlayerTab(QWidget):
         tmp = os.path.join(tempfile.gettempdir(), f"mcsm_{filename}")
         if self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
             try:
-                with open(tmp, "r", encoding="utf-8") as f:
+                with open(tmp, encoding="utf-8") as f:
                     data = json.load(f)
             except Exception:
                 data = []
@@ -1766,7 +1761,7 @@ class PlayerTab(QWidget):
         if not self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
             return
         try:
-            with open(tmp, "r", encoding="utf-8") as f:
+            with open(tmp, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             data = []
@@ -1800,7 +1795,7 @@ class PlayerTab(QWidget):
             tmp = os.path.join(tempfile.gettempdir(), f"mcsm_{filename}")
             if self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
                 try:
-                    with open(tmp, "r", encoding="utf-8") as f:
+                    with open(tmp, encoding="utf-8") as f:
                         data = json.load(f)
                 except Exception:
                     data = []
@@ -1815,7 +1810,7 @@ class PlayerTab(QWidget):
                 self._load_data()
 
     def _remove_selected(self):
-        rows = set(r.row() for r in self.table.selectedIndexes())
+        rows = {r.row() for r in self.table.selectedIndexes()}
         if not rows:
             return
         idx = self.tab_combo.currentIndex()
@@ -1824,7 +1819,7 @@ class PlayerTab(QWidget):
         tmp = os.path.join(tempfile.gettempdir(), f"mcsm_{filename}")
         if self.api.download_file(self.daemon_id, self.instance_uuid, path, tmp):
             try:
-                with open(tmp, "r", encoding="utf-8") as f:
+                with open(tmp, encoding="utf-8") as f:
                     data = json.load(f)
             except Exception:
                 data = []
@@ -1946,7 +1941,7 @@ class PluginTab(QWidget):
             QMessageBox.warning(self, "失败", "上传失败")
 
     def _toggle(self):
-        rows = set(r.row() for r in self.table.selectedIndexes())
+        rows = {r.row() for r in self.table.selectedIndexes()}
         if not rows:
             return
         for row in rows:
@@ -1960,7 +1955,7 @@ class PluginTab(QWidget):
         self._refresh()
 
     def _delete(self):
-        rows = set(r.row() for r in self.table.selectedIndexes())
+        rows = {r.row() for r in self.table.selectedIndexes()}
         if not rows:
             return
         r = QMessageBox.question(self, "确认删除", "删除选中的插件？",
@@ -2129,8 +2124,7 @@ class MCSManagerWindow(QMainWindow):
         if dlg.exec_() == QDialog.Accepted:
             cfg = dlg.get_config()
             save_config(cfg)
-            self.api.base_url = cfg.base_url
-            self.api._update_headers()
+            self.api.set_base_url(cfg.base_url)
             self.api.refresh_auth_from_config(cfg)
             self.daemon_id = cfg.daemon_id
             self.instance_uuid = cfg.instance_uuid
@@ -2209,7 +2203,7 @@ class MCSManagerWindow(QMainWindow):
         QMessageBox.about(self, "关于 MCSM Tools",
                           "MCSM Tools - MCSManager 管理客户端\n"
                           "基于 PyQt5 构建\n"
-                          f"版本 2.0.0")
+                          "版本 2.0.0")
 
     def closeEvent(self, event):
         if self.config.show_exit_dialog:

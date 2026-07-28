@@ -124,6 +124,32 @@ build.bat
 | 终端记忆 | 保存上一会话的终端输出，下次启动时恢复 |
 | 退出时显示确认对话框 | 关闭应用时弹出确认窗口 |
 
+### 配置文件位置
+
+配置、凭证和命令历史统一保存在用户目录，权限为 `0600`（仅当前用户可读写）：
+
+```
+~/.mcsm_tools/mcsm_config.ini      # 配置
+~/.mcsm_tools/.mcsm_credentials    # 已登录凭证（JSON）
+~/.mcsm_tools/command_history.json # 命令历史
+```
+
+可通过环境变量 `MCSM_TOOLS_HOME` 指定其他目录：
+
+```bash
+MCSM_TOOLS_HOME=/path/to/dir python -m mcsm_tools
+```
+
+旧版本遗留在当前工作目录的 `mcsm_config.ini` 会在首次启动时自动迁移。
+
+## 开发
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+pytest
+```
+
 ## 功能
 
 ### 终端控制
@@ -197,7 +223,8 @@ mcsm-tools/
 ├── mcsm-tools.sh         # Linux 启动脚本（虚拟环境 + fcitx5）
 ├── requirements.txt      # Python 依赖
 ├── setup.py              # 包配置
-├── mcsm_config.ini       # 配置文件（自动生成）
+├── requirements-dev.txt  # 开发依赖（pytest / ruff）
+├── tests/                # 单元测试
 ├── mcsm_tools/
 │   ├── __init__.py       # 包标识 + 版本号
 │   ├── __main__.py       # 模块入口

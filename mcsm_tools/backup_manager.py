@@ -4,7 +4,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 
-from .font_helper import MONO_FONT
 from .theme import Nord
 
 
@@ -100,7 +99,7 @@ class BackupManagerTab:
                 )
                 self.app.root.after(0, lambda: self._on_listed(items))
             except Exception as e:
-                self.app.root.after(0, lambda: self._on_list_error(str(e)))
+                self.app.root.after(0, lambda err=str(e): self._on_list_error(err))
 
         threading.Thread(target=do_list, daemon=True).start()
 
