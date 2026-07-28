@@ -5,7 +5,7 @@ a = Analysis(
     ['/home/meversation/CodeProject/mcsm-tools/run.py'],
     pathex=[],
     binaries=[],
-    datas=[('/home/meversation/CodeProject/mcsm-tools/mcsm_tools/fonts', 'mcsm_tools/fonts'), ('/home/meversation/CodeProject/mcsm-tools/mcsm_tools/icon.ico', 'mcsm_tools'), ('/home/meversation/CodeProject/mcsm-tools/mcsm_tools/icon.png', 'mcsm_tools')],
+    datas=[('/home/meversation/CodeProject/mcsm-tools/mcsm_tools/fonts', 'mcsm_tools/fonts')],
     hiddenimports=['engineio', 'engineio.client', 'prompt_toolkit', 'requests', 'PyQt5', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets'],
     hookspath=[],
     hooksconfig={},

@@ -21,8 +21,6 @@ pyinstaller \
     --distpath ./dist \
     --workpath ./build \
     --add-data "$DIR/mcsm_tools/fonts:mcsm_tools/fonts" \
-    --add-data "$DIR/mcsm_tools/icon.ico:mcsm_tools" \
-    --add-data "$DIR/mcsm_tools/icon.png:mcsm_tools" \
     --hidden-import engineio \
     --hidden-import engineio.client \
     --hidden-import prompt_toolkit \
