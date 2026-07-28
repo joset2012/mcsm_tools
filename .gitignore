@@ -13,3 +13,6 @@ dist/
 build/
 .mcsm_credentials
 mcsm_config.ini
+.pytest_cache/
+.coverage
+htmlcov/

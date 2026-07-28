@@ -226,3 +226,13 @@ mcsm-tools/
 │   └── mcsm-tools.exe    # Windows 可执行文件
 └── Compressed/           # 本地压缩输出目录（自动创建）
 ```
+
+## 测试
+
+```bash
+pip install -r requirements-dev.txt
+pytest                                        # 运行单元测试
+pytest --cov=mcsm_tools --cov-report=term-missing   # 查看覆盖率
+```
+
+测试位于 `tests/`，只覆盖非 GUI 逻辑（API 客户端、配置、凭证、命令历史、终端事件解析等），无需网络与图形环境。
