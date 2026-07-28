@@ -167,6 +167,7 @@ class MCSManagerAPI:
         return False
 
     def login(self, username: str, password: str) -> bool:
+        self.last_error = ""
         self._clear_auth_headers()
         payload = {"username": username, "password": password}
         try:
@@ -178,6 +179,7 @@ class MCSManagerAPI:
             resp.raise_for_status()
             data = resp.json()
             if data.get("status") != 200:
+                self.last_error = f"登录被拒绝: {data.get('data') or data.get('status')}"
                 return False
 
             token = None
@@ -198,12 +200,23 @@ class MCSManagerAPI:
                         token = info_data.get("data", {}).get("token")
 
             if not token:
+                self.last_error = "登录成功但未能获取 token（账号或密码可能有误）"
                 return False
 
             cookie_str = "; ".join(f"{k}={v}" for k, v in self.session.cookies.get_dict().items())
             self.set_auth(token, cookie_str)
             return True
-        except Exception:
+        except requests.ConnectionError:
+            self.last_error = f"连接失败: {self._build_url('/api/auth/login')}"
+            return False
+        except requests.Timeout:
+            self.last_error = "请求超时"
+            return False
+        except requests.RequestException as e:
+            self.last_error = f"登录请求错误: {e}"
+            return False
+        except ValueError as e:
+            self.last_error = f"登录响应解析失败: {e}"
             return False
 
     def validate_credentials(self) -> bool:
@@ -362,7 +375,9 @@ class MCSManagerAPI:
     def upload_file(self, local_path: str, remote_dir: str,
                     daemon_id: str, instance_uuid: str,
                     progress_callback=None) -> bool:
+        self.last_error = ""
         if not os.path.exists(local_path):
+            self.last_error = f"本地文件不存在: {local_path}"
             return False
 
         file_name = os.path.basename(local_path)
@@ -372,13 +387,17 @@ class MCSManagerAPI:
             "uuid": instance_uuid,
             "upload_dir": remote_dir,
         })
-        if not data or data.get("status") != 200:
+        if not data:
+            return False
+        if data.get("status") != 200:
+            self.last_error = f"申请上传通道失败: {data.get('data') or data.get('status')}"
             return False
 
         d = data.get("data", {})
         upload_password = d.get("password")
         upload_addr = d.get("addr")
         if not upload_password or not upload_addr:
+            self.last_error = "服务器未返回上传地址或密码"
             return False
 
         upload_url = upload_addr.replace("wss://", "https://")
@@ -388,32 +407,46 @@ class MCSManagerAPI:
 
         try:
             reader = _ProgressReader(local_path, progress_callback)
+        except OSError as e:
+            self.last_error = f"读取本地文件失败: {e}"
+            return False
+        try:
             files = {'file': (file_name, reader, 'application/octet-stream')}
             headers = {
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "application/json, text/plain, */*",
             }
             resp = requests.post(upload_url, files=files, headers=headers, timeout=120)
-            reader.close()
-            return resp.status_code == 200
-        except Exception:
+            if resp.status_code != 200:
+                self.last_error = f"上传失败 HTTP {resp.status_code}: {resp.text[:500]}"
+                return False
+            return True
+        except requests.RequestException as e:
+            self.last_error = f"上传请求错误: {e}"
             return False
+        finally:
+            reader.close()
 
     def download_file(self, daemon_id: str, instance_uuid: str,
                       file_path: str, local_path: str,
                       progress_callback=None) -> bool:
+        self.last_error = ""
         data = self._post("/api/files/download", {
             "daemonId": daemon_id,
             "uuid": instance_uuid,
             "file_name": file_path,
         })
-        if not data or data.get("status") != 200:
+        if not data:
+            return False
+        if data.get("status") != 200:
+            self.last_error = f"申请下载通道失败: {data.get('data') or data.get('status')}"
             return False
 
         d = data.get("data", {})
         password = d.get("password")
         addr = d.get("addr")
         if not password or not addr:
+            self.last_error = "服务器未返回下载地址或密码"
             return False
 
         download_addr = addr.replace("wss://", "https://")
@@ -439,7 +472,11 @@ class MCSManagerAPI:
                         if progress_callback:
                             progress_callback(downloaded, total)
             return True
-        except Exception:
+        except requests.RequestException as e:
+            self.last_error = f"下载请求错误: {e}"
+            return False
+        except OSError as e:
+            self.last_error = f"写入本地文件失败: {e}"
             return False
 
     def delete_files(self, daemon_id: str, instance_uuid: str, targets: list[str]) -> bool:

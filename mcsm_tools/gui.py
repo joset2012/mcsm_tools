@@ -1038,7 +1038,8 @@ class MCSMGUI:
             self._set_status("终端已连接")
             self._term_conn_label.config(text="● 已连接", foreground=Nord.aurora_green)
         else:
-            self._set_status("终端连接失败")
+            err = self.terminal.last_error or "未知错误"
+            self._set_status(f"终端连接失败: {err}")
             self._term_conn_label.config(text="● 连接失败", foreground=Nord.aurora_red)
 
     def _disconnect_terminal(self):

@@ -19,6 +19,7 @@ class MCSMTerminal:
         self._password: str = ""
         self._addr: str = ""
         self._connected = False
+        self.last_error: str = ""
 
         self.on_output: Callable | None = None
         self.on_connect: Callable | None = None
@@ -90,6 +91,7 @@ class MCSMTerminal:
     def connect(self, addr: str, password: str, base_url: str) -> bool:
         self._addr = addr
         self._password = password
+        self.last_error = ""
         ws_url = f"{addr}?password={password}"
         try:
             self.sio.connect(ws_url, transports=['websocket'], headers={
@@ -97,7 +99,8 @@ class MCSMTerminal:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             })
             return True
-        except Exception:
+        except socketio.exceptions.ConnectionError as e:
+            self.last_error = f"WebSocket 连接失败: {e}"
             return False
 
     def disconnect(self):

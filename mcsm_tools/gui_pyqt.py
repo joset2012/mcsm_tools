@@ -1128,6 +1128,8 @@ class FileManagerTab(QWidget):
         self.progress.setVisible(False)
         if ok:
             self._load_files(self.current_path)
+        else:
+            QMessageBox.warning(self, "上传失败", self.api.last_error or "上传失败")
 
     def _mkdir(self):
         name, ok = QInputDialog.getText(self, "新建文件夹", "文件夹名称:")
@@ -1232,6 +1234,8 @@ class FileManagerTab(QWidget):
         self.progress.setVisible(False)
         if ok:
             QMessageBox.information(self, "完成", f"下载完成: {local}")
+        else:
+            QMessageBox.warning(self, "下载失败", self.api.last_error or "下载失败")
 
     def _edit_remote_file(self, item):
         data = item.data(0, Qt.UserRole)
@@ -1242,7 +1246,7 @@ class FileManagerTab(QWidget):
         tmp = os.path.join(tempfile.gettempdir(), f"mcsm_edit_{data['name']}")
         ok = self.api.download_file(self.daemon_id, self.instance_uuid, fpath, tmp)
         if not ok:
-            QMessageBox.warning(self, "失败", "下载文件失败")
+            QMessageBox.warning(self, "失败", self.api.last_error or "下载文件失败")
             return
         try:
             with open(tmp, "r", encoding="utf-8", errors="replace") as f:
@@ -2167,14 +2171,17 @@ class MCSManagerWindow(QMainWindow):
     def _connect_terminal(self):
         if not self.daemon_id or not self.instance_uuid:
             return
-        try:
-            result = self.api.get_websocket_password(self.daemon_id, self.instance_uuid)
-            if result:
-                password, addr = result
-                self.terminal_mgr.connect(addr, password, self.api.base_url)
-                self.terminal_mgr.on_players_update = self._on_players_update
-        except Exception:
-            pass
+        result = self.api.get_websocket_password(self.daemon_id, self.instance_uuid)
+        if not result:
+            print(f"[terminal] 无法获取终端连接信息: {self.api.last_error or '未知错误'}",
+                  file=sys.stderr)
+            return
+        password, addr = result
+        if not self.terminal_mgr.connect(addr, password, self.api.base_url):
+            print(f"[terminal] 终端连接失败: {self.terminal_mgr.last_error or '未知错误'}",
+                  file=sys.stderr)
+            return
+        self.terminal_mgr.on_players_update = self._on_players_update
 
     def _on_players_update(self, players):
         if players:

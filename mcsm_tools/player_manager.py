@@ -99,7 +99,7 @@ class PlayerManagerTab:
                         with open(tmp.name, "r", encoding="utf-8") as f:
                             data = json.load(f)
                         self._player_data = data if isinstance(data, list) else []
-                    except (json.JSONDecodeError, Exception):
+                    except (json.JSONDecodeError, OSError):
                         self._player_data = []
                 else:
                     self._player_data = []
