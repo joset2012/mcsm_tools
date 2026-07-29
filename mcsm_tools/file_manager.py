@@ -92,12 +92,39 @@ def _strip_icon(display: str) -> str:
 
 
 def _is_dir(item: dict) -> bool:
-    v = item.get("isFile", item.get("type", ""))
-    if isinstance(v, bool):
-        return not v
-    if isinstance(v, int):
-        return v == 0
-    return v == "directory"
+    # 检查多个可能的字段名称和格式
+    # isFile: true=文件, false=目录
+    if "isFile" in item:
+        v = item["isFile"]
+        if isinstance(v, bool):
+            return not v
+        if isinstance(v, int):
+            return v == 0
+        if isinstance(v, str):
+            return v.lower() in ("false", "0", "no")
+    
+    # type: 0=目录, 1=文件 或 "directory"=目录
+    if "type" in item:
+        v = item["type"]
+        if isinstance(v, bool):
+            return not v
+        if isinstance(v, int):
+            return v == 0
+        if isinstance(v, str):
+            return v.lower() in ("directory", "0", "dir")
+    
+    # 检查其他可能的字段
+    if "isDir" in item:
+        v = item["isDir"]
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int):
+            return v == 1
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes")
+    
+    # 默认情况下，如果没有明确标识，假设为文件
+    return False
 
 
 def _get_name(item: dict) -> str:
