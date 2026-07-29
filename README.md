@@ -88,7 +88,7 @@ chmod +x build.sh
 在 Windows 上双击 `build.bat`，或在终端运行：
 
 ```cmd
-build.bat
+build.ps1
 ```
 
 输出：`dist\mcsm-tools.exe`（单文件）
