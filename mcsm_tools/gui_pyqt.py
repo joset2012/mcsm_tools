@@ -1,3 +1,6 @@
+# gui_pyqt.py
+# 完整版（已添加启动/强制关闭按钮到终端标签页）
+
 import json
 import os
 import re
@@ -27,9 +30,9 @@ from mcsm_tools.command_history import CommandHistory
 from mcsm_tools.qt_nord import QSS, apply_nord_palette, Nord
 
 
+# ========== 图标绘制 ==========
 class AppIcons:
     _cache = {}
-
     SIZE = 16
 
     @staticmethod
@@ -320,9 +323,10 @@ class AppIcons:
         p.setPen(QPen(c, 2))
         p.drawLine(int(s * 0.25), int(s * 0.35), int(s * 0.4), int(s * 0.5))
         p.drawLine(int(s * 0.25), int(s * 0.65), int(s * 0.4), int(s * 0.5))
-        p.drawLine(int(s * 0.5), int(s * 0.65), int(s * 0.7), int(s * 0.65))
+        p.drawLine(int(s * 0.5), int(s * 0.65), int(s * 0.7), int(s * 0.5))
 
 
+# ========== ANSI 解析 ==========
 _ANSI_RE = re.compile(r'\x1b\[([\d;]*)m')
 
 ANSI_COLORS = {
@@ -338,7 +342,6 @@ ANSI_BG = {
     '43': Nord.aurora_yellow, '44': Nord.frost_4, '45': Nord.aurora_pink,
     '46': Nord.frost_1, '47': Nord.snow_storm_2,
 }
-
 
 def parse_ansi(text: str):
     parts = _ANSI_RE.split(text)
@@ -366,23 +369,20 @@ def parse_ansi(text: str):
     return segments
 
 
+# ========== 日志高亮 ==========
 class LogHighlighter(QSyntaxHighlighter):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._rules = []
-
         fmt_info = QTextCharFormat()
         fmt_info.setForeground(QColor(Nord.aurora_green))
         self._rules.append((re.compile(r'\[?INFO\]?|\[?\d+:\d+:\d+\]?.*\[?\w+.*\]?.*:'), fmt_info))
-
         fmt_warn = QTextCharFormat()
         fmt_warn.setForeground(QColor(Nord.aurora_yellow))
         self._rules.append((re.compile(r'\[?WARN\]?|\[?WARNING\]?'), fmt_warn))
-
         fmt_error = QTextCharFormat()
         fmt_error.setForeground(QColor(Nord.aurora_red))
         self._rules.append((re.compile(r'\[?ERROR\]?|\[?SEVERE\]?|\[?FATAL\]?'), fmt_error))
-
         fmt_fatal = QTextCharFormat()
         fmt_fatal.setForeground(QColor(Nord.aurora_red))
         fmt_fatal.setFontWeight(QFont.Bold)
@@ -396,6 +396,7 @@ class LogHighlighter(QSyntaxHighlighter):
                 self.setFormat(start, length, fmt)
 
 
+# ========== 行号区域 ==========
 class LineNumberArea(QWidget):
     def __init__(self, editor):
         super().__init__(editor)
@@ -467,6 +468,7 @@ class LineNumberTextEdit(QPlainTextEdit):
         )
 
 
+# ========== 连接标签页 ==========
 class ConnectTab(QWidget):
     instance_selected = pyqtSignal(str, str)
     connection_status = pyqtSignal(str)
@@ -645,6 +647,7 @@ class ConnectTab(QWidget):
             self.instance_selected.emit(daemon_id, instance_uuid)
 
 
+# ========== 终端标签页（已添加启动/强制关闭按钮） ==========
 class TerminalTab(QWidget):
     output_signal = pyqtSignal(str)
     disconnect_signal = pyqtSignal()
@@ -668,7 +671,6 @@ class TerminalTab(QWidget):
     def _append_ansi_text(self, text: str):
         cursor = self.output.textCursor()
         cursor.movePosition(QTextCursor.End)
-
         for fg, bg, bold, segment in parse_ansi(text):
             if not segment:
                 continue
@@ -680,7 +682,6 @@ class TerminalTab(QWidget):
             if bold:
                 fmt.setFontWeight(QFont.Bold)
             cursor.insertText(segment, fmt)
-
         sb = self.output.verticalScrollBar()
         sb.setValue(sb.maximum())
 
@@ -711,7 +712,7 @@ class TerminalTab(QWidget):
 
         cmd_layout = QHBoxLayout()
         self.cmd_input = QLineEdit()
-        self.cmd_input.setPlaceholderText("输入命令... (Ctrl+R 搜索, Ctrl+D 收藏, \u2191\u2193 历史)")
+        self.cmd_input.setPlaceholderText("输入命令... (Ctrl+R 搜索, Ctrl+D 收藏, ↑↓ 历史)")
         self.cmd_input.returnPressed.connect(self._send_command)
         cmd_layout.addWidget(self.cmd_input)
 
@@ -727,12 +728,52 @@ class TerminalTab(QWidget):
         self.clear_btn.clicked.connect(self._clear_screen)
         cmd_layout.addWidget(self.clear_btn)
 
+        # ---------- 新增：启动 / 强制关闭按钮 ----------
+        self.start_btn = QPushButton("启动")
+        self.start_btn.clicked.connect(self._start_instance)
+        cmd_layout.addWidget(self.start_btn)
+
+        self.stop_btn = QPushButton("强制关闭")
+        self.stop_btn.clicked.connect(self._stop_instance)
+        cmd_layout.addWidget(self.stop_btn)
+        # ----------------------------------------------
+
         layout.addLayout(cmd_layout)
 
         self.input_history = []
         self.history_index = -1
-
         self.cmd_input.installEventFilter(self)
+
+    # ---------- 新增：启动实例 ----------
+    def _start_instance(self):
+        if not self.api.is_authenticated:
+            QMessageBox.warning(self, "未认证", "请先连接面板")
+            return
+        if not self.config.daemon_id or not self.config.instance_uuid:
+            QMessageBox.warning(self, "未配置", "请先在连接页选择实例")
+            return
+        ok = self.api.open_instance(self.config.daemon_id, self.config.instance_uuid)
+        if ok:
+            self.output.append("[系统] 实例已启动\n")
+        else:
+            QMessageBox.warning(self, "启动失败", self.api.last_error or "未知错误")
+
+    # ---------- 新增：强制关闭实例 ----------
+    def _stop_instance(self):
+        if not self.api.is_authenticated:
+            QMessageBox.warning(self, "未认证", "请先连接面板")
+            return
+        if not self.config.daemon_id or not self.config.instance_uuid:
+            QMessageBox.warning(self, "未配置", "请先在连接页选择实例")
+            return
+        reply = QMessageBox.question(self, "确认", "确定要强制关闭实例吗？",
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            ok = self.api.kill_instance(self.config.daemon_id, self.config.instance_uuid)
+            if ok:
+                self.output.append("[系统] 实例已强制关闭\n")
+            else:
+                QMessageBox.warning(self, "关闭失败", self.api.last_error or "未知错误")
 
     def eventFilter(self, obj, event):
         if obj is self.cmd_input:
@@ -860,14 +901,7 @@ class TerminalTab(QWidget):
         self.command_history.add(text)
 
 
-class RemoteFileModel:
-    def __init__(self, api, daemon_id, instance_uuid):
-        self.api = api
-        self.daemon_id = daemon_id
-        self.instance_uuid = instance_uuid
-        self.current_path = "/"
-
-
+# ========== 文件管理标签页 ==========
 class FileManagerTab(QWidget):
     def __init__(self, api, daemon_id, instance_uuid, parent=None):
         super().__init__(parent)
@@ -1053,7 +1087,6 @@ class FileManagerTab(QWidget):
 
     @staticmethod
     def _is_dir_from_item(item: dict) -> bool:
-        """更健壮的目录判断逻辑，支持多种API返回格式"""
         if "isFile" in item:
             v = item["isFile"]
             if isinstance(v, bool):
@@ -1399,6 +1432,7 @@ class FileManagerTab(QWidget):
         return f"{size:.1f} TB"
 
 
+# ========== 日志查看标签页 ==========
 class LogViewerTab(QWidget):
     LOG_DIRS = ["/logs", "/crash-reports", "/"]
 
@@ -1467,7 +1501,6 @@ class LogViewerTab(QWidget):
         )
 
     def _refresh_file_list(self):
-        # ==================== 修复开始 ====================
         self.file_combo.clear()
         if not self.daemon_id or not self.instance_uuid:
             self.file_combo.addItem("请先选择实例")
@@ -1498,7 +1531,34 @@ class LogViewerTab(QWidget):
             self.file_combo.setCurrentIndex(0)
         else:
             self.file_combo.addItem("未找到日志文件")
-        # ==================== 修复结束 ====================
+
+    @staticmethod
+    def _is_dir_from_item(item: dict) -> bool:
+        if "isFile" in item:
+            v = item["isFile"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("false", "0", "no")
+        if "type" in item:
+            v = item["type"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("directory", "0", "dir")
+        if "isDir" in item:
+            v = item["isDir"]
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, int):
+                return v == 1
+            if isinstance(v, str):
+                return v.lower() in ("true", "1", "yes")
+        return False
 
     def _load_selected_log(self):
         filename = self.file_combo.currentText()
@@ -1545,35 +1605,8 @@ class LogViewerTab(QWidget):
         sb = self.log_output.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    @staticmethod
-    def _is_dir_from_item(item: dict) -> bool:
-        if "isFile" in item:
-            v = item["isFile"]
-            if isinstance(v, bool):
-                return not v
-            if isinstance(v, int):
-                return v == 0
-            if isinstance(v, str):
-                return v.lower() in ("false", "0", "no")
-        if "type" in item:
-            v = item["type"]
-            if isinstance(v, bool):
-                return not v
-            if isinstance(v, int):
-                return v == 0
-            if isinstance(v, str):
-                return v.lower() in ("directory", "0", "dir")
-        if "isDir" in item:
-            v = item["isDir"]
-            if isinstance(v, bool):
-                return v
-            if isinstance(v, int):
-                return v == 1
-            if isinstance(v, str):
-                return v.lower() in ("true", "1", "yes")
-        return False
 
-
+# ========== 备份对话框 ==========
 class BackupDirDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1613,6 +1646,7 @@ class BackupDirDialog(QDialog):
         return name or None
 
 
+# ========== 备份标签页 ==========
 class BackupTab(QWidget):
     def __init__(self, api, daemon_id, instance_uuid, parent=None):
         super().__init__(parent)
@@ -1742,6 +1776,7 @@ class BackupTab(QWidget):
         return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+# ========== 玩家管理标签页 ==========
 class PlayerTab(QWidget):
     def __init__(self, api, daemon_id, instance_uuid, parent=None):
         super().__init__(parent)
@@ -1914,6 +1949,7 @@ class PlayerTab(QWidget):
             self._load_data()
 
 
+# ========== 插件管理标签页 ==========
 class PluginTab(QWidget):
     def __init__(self, api, daemon_id, instance_uuid, parent=None):
         super().__init__(parent)
@@ -2052,6 +2088,7 @@ class PluginTab(QWidget):
         return f"{size:.1f} TB"
 
 
+# ========== 设置对话框 ==========
 class SettingsDialog(QDialog):
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -2128,6 +2165,7 @@ class SettingsDialog(QDialog):
         return self.config
 
 
+# ========== 主窗口 ==========
 class MCSManagerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
