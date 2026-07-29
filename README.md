@@ -88,7 +88,7 @@ chmod +x build.sh
 在 Windows 上双击 `build.bat`，或在终端运行：
 
 ```cmd
-build.bat
+build.ps1
 ```
 
 输出：`dist\mcsm-tools.exe`（单文件）
@@ -216,11 +216,12 @@ pytest
 ```
 mcsm-tools/
 ├── install.sh            # Linux 安装脚本
-├── install.bat           # Windows 安装脚本
+├── install.ps1           # Windows 安装脚本
 ├── build.sh              # Linux 编译脚本
-├── build.bat             # Windows 编译脚本
+├── build.ps1             # Windows 编译脚本
 ├── run.py                # PyInstaller 入口
 ├── mcsm-tools.sh         # Linux 启动脚本（虚拟环境 + fcitx5）
+├── mcsm-tools.ps1        # Windows 启动脚本
 ├── requirements.txt      # Python 依赖
 ├── setup.py              # 包配置
 ├── requirements-dev.txt  # 开发依赖（pytest / ruff）
