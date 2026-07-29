@@ -49,6 +49,10 @@ class LogViewerTab:
         self._search_entry.bind("<Return>", lambda e: self._do_search())
         ttk.Button(search_frame, text="查找", command=self._do_search).pack(side=tk.LEFT, padx=2)
         ttk.Button(search_frame, text="清除高亮", command=self._clear_highlight).pack(side=tk.LEFT, padx=2)
+        
+        # 添加多关键词提示
+        hint_label = ttk.Label(search_frame, text="(多关键词用/分隔)", foreground=Nord.frost_4)
+        hint_label.pack(side=tk.LEFT, padx=5)
 
         main_frame = ttk.Frame(self.frame)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=2)
@@ -174,22 +178,34 @@ class LogViewerTab:
         if not query:
             return
 
+        # 支持多关键词过滤，用 / 分隔
+        keywords = [k.strip() for k in query.split('/') if k.strip()]
+        if not keywords:
+            return
+
         self._log_text.tag_remove("highlight", '1.0', tk.END)
-        start = '1.0'
+        
+        # 获取所有文本内容
+        content = self._log_text.get('1.0', tk.END)
+        lines = content.split('\n')
+        
         count = 0
-        while True:
-            pos = self._log_text.search(query, start, tk.END, nocase=True)
-            if not pos:
-                break
-            end = f"{pos}+{len(query)}c"
-            self._log_text.tag_add("highlight", pos, end)
-            start = end
-            count += 1
+        for i, line in enumerate(lines, 1):
+            # 检查行是否包含所有关键词
+            line_lower = line.lower()
+            if all(keyword.lower() in line_lower for keyword in keywords):
+                # 高亮整行
+                start_pos = f"{i}.0"
+                end_pos = f"{i}.0 lineend"
+                self._log_text.tag_add("highlight", start_pos, end_pos)
+                count += 1
 
         if count == 0:
-            self.app._set_status(f"未找到: {query}")
+            keyword_str = " / ".join(keywords)
+            self.app._set_status(f"未找到包含所有关键词的行: {keyword_str}")
         else:
-            self.app._set_status(f"找到 {count} 处匹配")
+            keyword_str = " / ".join(keywords)
+            self.app._set_status(f"找到 {count} 行包含所有关键词: {keyword_str}")
 
     def _clear_highlight(self):
         self._log_text.tag_remove("highlight", '1.0', tk.END)
@@ -215,8 +231,8 @@ class LogViewerTab:
                         for item in items:
                             name = item.get("name", "")
                             full = d.rstrip('/') + '/' + name if d != '/' else '/' + name
-                            typ = item.get("type", 1)
-                            if typ == 0:
+                            # 使用更健壮的目录判断逻辑
+                            if self._is_dir_from_item(item):
                                 continue
                             if self._is_log_file(name):
                                 all_files[full] = name
@@ -227,6 +243,43 @@ class LogViewerTab:
                 self.app.root.after(0, lambda m=err_msg: self._file_combo.configure(values=[f"错误: {m}"]))
 
         threading.Thread(target=do_list, daemon=True).start()
+
+    @staticmethod
+    def _is_dir_from_item(item: dict) -> bool:
+        """更健壮的目录判断逻辑，支持多种API返回格式"""
+        # 检查多个可能的字段名称和格式
+        # isFile: true=文件, false=目录
+        if "isFile" in item:
+            v = item["isFile"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("false", "0", "no")
+        
+        # type: 0=目录, 1=文件 或 "directory"=目录
+        if "type" in item:
+            v = item["type"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("directory", "0", "dir")
+        
+        # isDir: true=目录, false=文件
+        if "isDir" in item:
+            v = item["isDir"]
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, int):
+                return v == 1
+            if isinstance(v, str):
+                return v.lower() in ("true", "1", "yes")
+        
+        # 默认情况下，如果没有明确标识，假设为文件
+        return False
 
     @staticmethod
     def _is_log_file(name: str) -> bool:

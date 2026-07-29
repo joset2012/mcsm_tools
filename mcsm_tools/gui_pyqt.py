@@ -853,7 +853,7 @@ class TerminalTab(QWidget):
             return
 
         if self.terminal_mgr and self.terminal_mgr.is_connected:
-            self.terminal_mgr.send_command(text + "\n")
+            self.terminal_mgr.send_command(text)
         self.cmd_input.clear()
         self.input_history.append(text)
         self.history_index = len(self.input_history)
@@ -1052,6 +1052,43 @@ class FileManagerTab(QWidget):
                 self.api.upload_file(local_path, remote_dir, self.daemon_id, self.instance_uuid)
 
     @staticmethod
+    def _is_dir_from_item(item: dict) -> bool:
+        """更健壮的目录判断逻辑，支持多种API返回格式"""
+        # 检查多个可能的字段名称和格式
+        # isFile: true=文件, false=目录
+        if "isFile" in item:
+            v = item["isFile"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("false", "0", "no")
+        
+        # type: 0=目录, 1=文件 或 "directory"=目录
+        if "type" in item:
+            v = item["type"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("directory", "0", "dir")
+        
+        # isDir: true=目录, false=文件
+        if "isDir" in item:
+            v = item["isDir"]
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, int):
+                return v == 1
+            if isinstance(v, str):
+                return v.lower() in ("true", "1", "yes")
+        
+        # 默认情况下，如果没有明确标识，假设为文件
+        return False
+
+    @staticmethod
     def _file_icon(name, is_dir):
         if is_dir:
             return AppIcons.icon("folder")
@@ -1071,7 +1108,8 @@ class FileManagerTab(QWidget):
             return
         for item in items:
             name = item.get("name", "?")
-            is_dir = item.get("isDir", False)
+            # 更健壮的目录判断逻辑
+            is_dir = self._is_dir_from_item(item)
             size = item.get("size", item.get("fileSize", 0))
             mtime = item.get("modTime", item.get("mtime", ""))
             if isinstance(size, (int, float)):
@@ -1407,7 +1445,7 @@ class LogViewerTab(QWidget):
         search_layout = QHBoxLayout()
         search_layout.addWidget(QLabel("搜索:"))
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("关键词过滤...")
+        self.filter_edit.setPlaceholderText("关键词过滤... (多关键词用/分隔)")
         self.filter_edit.textChanged.connect(self._apply_filter)
         search_layout.addWidget(self.filter_edit)
 
@@ -1447,7 +1485,7 @@ class LogViewerTab(QWidget):
             if items:
                 for item in items:
                     name = item.get("name", "")
-                    if item.get("isDir", False):
+                    if self._is_dir_from_item(item):
                         continue
                     if self._is_log_file(name):
                         full = d.rstrip('/') + '/' + name if d != '/' else '/' + name
@@ -1486,15 +1524,22 @@ class LogViewerTab(QWidget):
         self._load_selected_log()
 
     def _apply_filter(self):
-        keyword = self.filter_edit.text().strip().lower()
+        query = self.filter_edit.text().strip()
         if not self._log_text:
             self.log_output.clear()
             return
-        if not keyword:
+        if not query:
             self.log_output.setPlainText(self._log_text)
         else:
+            # 支持多关键词过滤，用 / 分隔
+            keywords = [k.strip().lower() for k in query.split('/') if k.strip()]
+            if not keywords:
+                self.log_output.setPlainText(self._log_text)
+                return
+            
             lines = self._log_text.split('\n')
-            filtered = '\n'.join(line for line in lines if keyword in line.lower())
+            # 只显示包含所有关键词的行
+            filtered = '\n'.join(l for l in lines if all(kw in l.lower() for kw in keywords))
             self.log_output.setPlainText(filtered)
         sb = self.log_output.verticalScrollBar()
         sb.setValue(sb.maximum())
