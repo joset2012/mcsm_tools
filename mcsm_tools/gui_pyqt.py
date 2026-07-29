@@ -1054,8 +1054,6 @@ class FileManagerTab(QWidget):
     @staticmethod
     def _is_dir_from_item(item: dict) -> bool:
         """更健壮的目录判断逻辑，支持多种API返回格式"""
-        # 检查多个可能的字段名称和格式
-        # isFile: true=文件, false=目录
         if "isFile" in item:
             v = item["isFile"]
             if isinstance(v, bool):
@@ -1064,8 +1062,6 @@ class FileManagerTab(QWidget):
                 return v == 0
             if isinstance(v, str):
                 return v.lower() in ("false", "0", "no")
-        
-        # type: 0=目录, 1=文件 或 "directory"=目录
         if "type" in item:
             v = item["type"]
             if isinstance(v, bool):
@@ -1074,8 +1070,6 @@ class FileManagerTab(QWidget):
                 return v == 0
             if isinstance(v, str):
                 return v.lower() in ("directory", "0", "dir")
-        
-        # isDir: true=目录, false=文件
         if "isDir" in item:
             v = item["isDir"]
             if isinstance(v, bool):
@@ -1084,8 +1078,6 @@ class FileManagerTab(QWidget):
                 return v == 1
             if isinstance(v, str):
                 return v.lower() in ("true", "1", "yes")
-        
-        # 默认情况下，如果没有明确标识，假设为文件
         return False
 
     @staticmethod
@@ -1108,7 +1100,6 @@ class FileManagerTab(QWidget):
             return
         for item in items:
             name = item.get("name", "?")
-            # 更健壮的目录判断逻辑
             is_dir = self._is_dir_from_item(item)
             size = item.get("size", item.get("fileSize", 0))
             mtime = item.get("modTime", item.get("mtime", ""))
@@ -1476,29 +1467,42 @@ class LogViewerTab(QWidget):
         )
 
     def _refresh_file_list(self):
+        # ==================== 修复开始 ====================
         self.file_combo.clear()
+        if not self.daemon_id or not self.instance_uuid:
+            self.file_combo.addItem("请先选择实例")
+            return
+
         all_files = []
         dir_idx = self.dir_combo.currentIndex()
         dirs = self.LOG_DIRS if dir_idx == 0 else [self.LOG_DIRS[dir_idx - 1]]
+
         for d in dirs:
-            items = self.api.list_files(self.daemon_id, self.instance_uuid, d)
-            if items:
-                for item in items:
-                    name = item.get("name", "")
-                    if self._is_dir_from_item(item):
-                        continue
-                    if self._is_log_file(name):
-                        full = d.rstrip('/') + '/' + name if d != '/' else '/' + name
-                        all_files.append(full)
+            try:
+                items = self.api.list_files(self.daemon_id, self.instance_uuid, d)
+            except Exception:
+                items = None
+            if items is None:
+                continue
+            for item in items:
+                name = item.get("name", "")
+                if self._is_dir_from_item(item):
+                    continue
+                if self._is_log_file(name):
+                    full = d.rstrip('/') + '/' + name if d != '/' else '/' + name
+                    all_files.append(full)
+
         if all_files:
             all_files.sort()
             self.file_combo.addItems(all_files)
+            self.file_combo.setCurrentIndex(0)
         else:
             self.file_combo.addItem("未找到日志文件")
+        # ==================== 修复结束 ====================
 
     def _load_selected_log(self):
         filename = self.file_combo.currentText()
-        if not filename or filename == "未找到日志文件":
+        if not filename or filename in ("请先选择实例", "未找到日志文件"):
             return
         is_gz = filename.endswith('.gz')
         tmp = os.path.join(tempfile.gettempdir(), "mcsm_log_tmp" + (".gz" if is_gz else ".log"))
@@ -1531,18 +1535,43 @@ class LogViewerTab(QWidget):
         if not query:
             self.log_output.setPlainText(self._log_text)
         else:
-            # 支持多关键词过滤，用 / 分隔
             keywords = [k.strip().lower() for k in query.split('/') if k.strip()]
             if not keywords:
                 self.log_output.setPlainText(self._log_text)
                 return
-            
             lines = self._log_text.split('\n')
-            # 只显示包含所有关键词的行
             filtered = '\n'.join(l for l in lines if all(kw in l.lower() for kw in keywords))
             self.log_output.setPlainText(filtered)
         sb = self.log_output.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    @staticmethod
+    def _is_dir_from_item(item: dict) -> bool:
+        if "isFile" in item:
+            v = item["isFile"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("false", "0", "no")
+        if "type" in item:
+            v = item["type"]
+            if isinstance(v, bool):
+                return not v
+            if isinstance(v, int):
+                return v == 0
+            if isinstance(v, str):
+                return v.lower() in ("directory", "0", "dir")
+        if "isDir" in item:
+            v = item["isDir"]
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, int):
+                return v == 1
+            if isinstance(v, str):
+                return v.lower() in ("true", "1", "yes")
+        return False
 
 
 class BackupDirDialog(QDialog):
